@@ -163,16 +163,23 @@ final class MirrorConnection {
           guard let self else { return }
           do {
             let message = try MirrorWire.decode(payload)
-            self.resetDeadline()
-            if message.kind == .ping {
-              self.send(.pong)
-            } else if message.kind != .pong {
-              self.onMessage?(message)
-            }
+            self.receive(message)
             if !self.closed { self.readHeader() }
           } catch { self.close(error.localizedDescription) }
         }
       } catch { self.close(error.localizedDescription) }
+    }
+  }
+
+  func receive(_ message: MirrorMessage) {
+    // A revoked lease can still have input in flight. Do not let its rejection
+    // cancel the final status message while that message is draining.
+    guard !closed, !finishing else { return }
+    resetDeadline()
+    if message.kind == .ping {
+      send(.pong)
+    } else if message.kind != .pong {
+      onMessage?(message)
     }
   }
 

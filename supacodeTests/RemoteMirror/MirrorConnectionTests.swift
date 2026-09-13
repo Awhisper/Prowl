@@ -7,7 +7,42 @@ import Testing
 
 @MainActor
 struct MirrorConnectionTests {
-  @Test(.timeLimit(.minutes(1))) func incompleteHandshakeUsesShortDeadlineWithoutCountingFailure() async throws {
+  @Test func staleInputCannotInterruptQueuedEndMessage() {
+    let peer = MirrorConnection(
+      NWConnection(host: "127.0.0.1", port: 1, using: .tcp), clock: TestClock())
+    defer { peer.close() }
+    var inputDelivered = false
+    var closed = false
+    peer.onMessage = { _ in
+      inputDelivered = true
+      // Host has already removed this lease before queuing its ended response.
+      peer.close("Invalid subscription.")
+    }
+    peer.onClose = { _ in closed = true }
+    // An unstarted transport holds its send completion. Deliver an already-decoded
+    // input before yielding to model an in-flight message during final-send drain.
+    peer.send(.ended(.init(reason: .takenOver)), closeAfterSending: true)
+    peer.receive(.input(.init(bytes: Data([65]), subscriptionID: UUID())))
+    #expect(!inputDelivered)
+    #expect(!closed)
+  }
+
+  @Test func activeConnectionDispatchesInput() {
+    let peer = MirrorConnection(
+      NWConnection(host: "127.0.0.1", port: 1, using: .tcp), clock: TestClock())
+    defer { peer.close() }
+    let input = MirrorMessage.input(.init(bytes: Data([65]), subscriptionID: UUID()))
+    var received: MirrorMessage?
+    peer.onMessage = { received = $0 }
+    peer.receive(input)
+    #expect(received?.kind == .input)
+    #expect(received?.bytes == input.bytes)
+    #expect(received?.subscriptionID == input.subscriptionID)
+  }
+
+  @Test(.timeLimit(.minutes(1))) func incompleteHandshakeUsesShortDeadlineWithoutCountingFailure()
+    async throws
+  {
     let listener = try NWListener(using: .tcp)
     let listening = AsyncStream<Void>.makeStream()
     let accepted = AsyncStream<NWConnection>.makeStream()
