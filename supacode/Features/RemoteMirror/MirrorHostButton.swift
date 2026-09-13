@@ -355,16 +355,21 @@ private struct MirrorPairingView: View {
         Label("Paired with \(paired.name)", systemImage: "checkmark.circle.fill")
           .font(.title3).foregroundStyle(.green)
         Text("The device can now connect to this Mac and select a pane.").foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
       } else {
+        // Sheets propose no height; without fixedSize multi-line text collapses to one truncated line.
         Text(
           "On the other device, open Remote Mirror → Client → Connect to a New Host. "
             + "Enter one of these addresses with the port, then the code below."
         )
         .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
         addresses
         code
       }
-      if let error = copyError ?? host.error { Text(error).foregroundStyle(.red) }
+      if let error = copyError ?? host.error {
+        Text(error).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+      }
       HStack {
         Button(host.lastPairedDevice == nil ? "Cancel" : "Done") {
           host.cancelPairing()
@@ -413,29 +418,34 @@ private struct MirrorPairingView: View {
   }
 
   private var addresses: some View {
-    VStack(alignment: .leading, spacing: 6) {
+    VStack(alignment: .leading, spacing: 8) {
       Text("This Mac’s address").font(.subheadline.weight(.semibold))
-      if let localName {
-        addressRow(label: "Name", value: localName + ":" + host.port)
-      }
-      ForEach(reachable) { interface in
-        addressRow(label: interface.label, value: interface.address + ":" + host.port)
+      // A grid lets the label column fit names like Thunderbolt Bridge without a fixed width.
+      Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
+        if let localName {
+          addressRow(label: "Name", value: localName + ":" + host.port)
+        }
+        ForEach(reachable) { interface in
+          addressRow(label: interface.label, value: interface.address + ":" + host.port)
+        }
       }
       if reachable.isEmpty, localName == nil {
         Text("No network address found. Connect this Mac to a network.").font(.caption).foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
       }
       Text(
         "Reachable on your local network or VPN. The internet cannot reach this port unless your router forwards it."
       )
       .font(.caption).foregroundStyle(.secondary)
+      .fixedSize(horizontal: false, vertical: true)
     }
   }
 
   private func addressRow(label: String, value: String) -> some View {
-    HStack(spacing: 8) {
-      Text(label).foregroundStyle(.secondary).frame(width: 96, alignment: .leading).lineLimit(1)
+    GridRow {
+      Text(label).foregroundStyle(.secondary).lineLimit(1)
       Text(value).font(.body.monospaced()).textSelection(.enabled).lineLimit(1)
-      Spacer()
+        .frame(maxWidth: .infinity, alignment: .leading)
       Button {
         copy(value)
       } label: {

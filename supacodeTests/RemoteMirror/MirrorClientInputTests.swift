@@ -71,6 +71,16 @@ struct MirrorHostAddressesTests {
     #expect(wifi.label == "Wi-Fi")
     #expect(vpn.label == "utun3")
   }
+
+  @Test func presentableDropsUnnamedVirtualInterfacesAndLabelsTunnels() {
+    let bridge = MirrorNetworkInterface(
+      name: "bridge100", displayName: nil, address: "192.168.137.1", isIPv4: true, isLoopback: false)
+    let awdl = MirrorNetworkInterface(
+      name: "awdl0", displayName: nil, address: "2001:db8::9", isIPv4: false, isLoopback: false)
+    let shown = MirrorHostAddresses.presentable([awdl, vpn, bridge, loop, wifi])
+    #expect(shown.map(\.name) == ["en0", "utun3", "lo0"])
+    #expect(shown.map(\.label) == ["Wi-Fi", "VPN", "lo0"])
+  }
 }
 
 struct MirrorEndpointInputTests {

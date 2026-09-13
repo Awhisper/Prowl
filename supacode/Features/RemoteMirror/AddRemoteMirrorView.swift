@@ -74,8 +74,10 @@ struct AddRemoteMirrorView: View {
 
   private var form: some View {
     VStack(alignment: .leading, spacing: 16) {
+      // Sheets propose no height; without fixedSize multi-line text collapses to one truncated line.
       Text("Enter the address shown on Host under Remote Mirror → Add a Device.")
         .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
       Form {
         TextField("Address", text: $address, prompt: Text("IP address"))
           .accessibilityIdentifier("remote-mirror-address")
@@ -105,9 +107,11 @@ struct AddRemoteMirrorView: View {
       } else if let knownHost {
         Label("Already paired with \(knownHost.displayName). No code is needed.", systemImage: "checkmark.seal")
           .font(.caption).foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
       }
       if let message = client?.error ?? error {
         Text(message).foregroundStyle(.red).textSelection(.enabled)
+          .fixedSize(horizontal: false, vertical: true)
       }
     }
   }

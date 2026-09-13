@@ -46,7 +46,20 @@ nonisolated enum MirrorHostAddresses {
           name: name, displayName: names[name], address: address, isIPv4: family == AF_INET,
           isLoopback: entry.ifa_flags & UInt32(IFF_LOOPBACK) != 0))
     }
-    return result.sorted { lhs, rhs in
+    return presentable(result)
+  }
+
+  /// Keeps loopback, interfaces macOS names (Wi-Fi, Ethernet, Thunderbolt Bridge) and VPN tunnels.
+  /// Unnamed virtual interfaces such as bridge100, awdl0 or anpi0 are not addresses a user would enter.
+  static func presentable(_ interfaces: [MirrorNetworkInterface]) -> [MirrorNetworkInterface] {
+    interfaces.compactMap { interface -> MirrorNetworkInterface? in
+      if interface.isLoopback || interface.displayName != nil { return interface }
+      guard interface.name.hasPrefix("utun") else { return nil }
+      return MirrorNetworkInterface(
+        name: interface.name, displayName: "VPN", address: interface.address,
+        isIPv4: interface.isIPv4, isLoopback: false)
+    }
+    .sorted { lhs, rhs in
       if lhs.isIPv4 != rhs.isIPv4 { return lhs.isIPv4 }
       if lhs.isLoopback != rhs.isLoopback { return rhs.isLoopback }
       return lhs.name.localizedStandardCompare(rhs.name) == .orderedAscending
