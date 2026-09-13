@@ -186,17 +186,36 @@ private struct MirrorSettingsView: View {
       Text("Host").font(.subheadline.weight(.semibold))
       Text("Let paired Prowl apps on your network mirror this Mac’s terminals.")
         .foregroundStyle(.secondary)
-      Form {
-        Picker("Listen on", selection: $host.address) {
-          ForEach(listenOptions) { option in
-            Text(option.label).tag(option.address)
+      // Static text while running: a disabled, still-focused field keeps its selection highlight.
+      let editable = !(host.isRunning || host.isStarting)
+      Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 10) {
+        GridRow {
+          Text("Listen on").gridColumnAlignment(.trailing)
+          if editable {
+            Picker("Listen on", selection: $host.address) {
+              ForEach(listenOptions) { option in
+                Text(option.label).tag(option.address)
+              }
+            }
+            .labelsHidden()
+            .fixedSize()
+            .help("Which of this Mac’s addresses accept connections")
+          } else {
+            Text(listenOptions.first { $0.address == host.address }?.label ?? host.address)
           }
         }
-        .help("Which of this Mac’s addresses accept connections")
-        TextField("Port", text: $host.port)
-          .help("The network port other Prowl apps connect to")
+        GridRow {
+          Text("Port").gridColumnAlignment(.trailing)
+          if editable {
+            TextField("Port", text: $host.port)
+              .labelsHidden()
+              .frame(width: 100)
+              .help("The network port other Prowl apps connect to")
+          } else {
+            Text(host.port)
+          }
+        }
       }
-      .disabled(host.isRunning || host.isStarting)
       HStack {
         Spacer()
         if host.isRunning || host.isStarting {

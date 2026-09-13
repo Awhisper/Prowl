@@ -77,7 +77,7 @@ struct AddRemoteMirrorView: View {
       Text("Enter the address shown on Host under Remote Mirror → Add a Device.")
         .foregroundStyle(.secondary)
       Form {
-        TextField("Address", text: $address, prompt: Text("192.168.1.5 or mini.local"))
+        TextField("Address", text: $address, prompt: Text("IP address or host name"))
           .accessibilityIdentifier("remote-mirror-address")
         TextField("Port", text: $port, prompt: Text("7880"))
       }
@@ -97,8 +97,9 @@ struct AddRemoteMirrorView: View {
               if formatted != next { pairingCode = formatted }
             }
             .accessibilityIdentifier("remote-mirror-pairing-code")
-          Text("The eight-character code shown on Host under Add a Device. It expires after 60 seconds.")
+          Text("The eight-character code shown on Host under Add a Device.\nIt expires after 60 seconds.")
             .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+            .fixedSize(horizontal: false, vertical: true)
         }
         .frame(maxWidth: .infinity)
       } else if let knownHost {
