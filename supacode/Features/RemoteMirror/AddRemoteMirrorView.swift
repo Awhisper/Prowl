@@ -1,73 +1,44 @@
-import Network
 import SwiftUI
 
 struct AddRemoteMirrorView: View {
   @Environment(RemoteMirrorStore.self) private var mirrors
   let dismiss: () -> Void
-  var savedHost: MirrorSavedConnection?
+  var savedHost: MirrorKnownHost?
   @State private var address = ""
   @State private var port = "7880"
-  @State private var pairingKey = ""
+  @State private var pairingCode = ""
   @State private var client: MirrorClient?
   @State private var error: String?
   @State private var added = false
   @State private var restored = false
+  @State private var requiresNewCode = false
+  @FocusState private var codeFocused: Bool
+
+  private var isConnecting: Bool { client?.isConnecting == true }
+
+  private var knownHost: MirrorKnownHost? {
+    guard let endpoint = try? MirrorEndpointInput.endpoint(address: address, port: port) else { return nil }
+    return mirrors.knownHosts.host(address: endpoint.address, port: endpoint.port)
+  }
+
+  /// A saved credential is used silently; the code field appears only when one is missing or rejected.
+  private var needsPairingCode: Bool { requiresNewCode || knownHost == nil }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
       Text("Connect to Host").font(.title2.bold())
       if let client, client.isConnected {
-        Text("Select a Host pane").foregroundStyle(.secondary)
-        if client.panes.isEmpty { Text("No open panes on this Host.") }
-        ScrollView {
-          VStack(spacing: 8) {
-            ForEach(client.panes) { pane in
-              Button {
-                added = true
-                mirrors.add(client, pane: pane)
-                dismiss()
-              } label: {
-                HStack {
-                  VStack(alignment: .leading) {
-                    Text(pane.projectName ?? pane.title).font(.headline).lineLimit(1)
-                    Text(pane.subtitle ?? pane.directory).font(.caption).foregroundStyle(.secondary)
-                      .lineLimit(1)
-                  }
-                  Spacer()
-                  Text(pane.busy ? (client.supportsTakeover ? "Take Over" : "In use") : "Mirror")
-                }
-                .padding(10).frame(maxWidth: .infinity, alignment: .leading)
-              }
-              .buttonStyle(.plain)
-              .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
-              .help(pane.title + "\n" + pane.directory)
-              .disabled(pane.busy && !client.supportsTakeover)
-            }
-          }
-        }
-        .frame(height: min(280, CGFloat(max(1, client.panes.count)) * 76))
-        Button("Refresh Panes") { client.refreshPanes() }
+        panePicker(client)
       } else {
-        Text(
-          "Enter the Host address. For a new device, click Add a Device on Host and enter its temporary code."
-        )
-        .foregroundStyle(.secondary)
-        Form {
-          TextField("Host IP", text: $address).accessibilityIdentifier("remote-mirror-address")
-          TextField("Port", text: $port)
-          SecureField("Pairing Code (new devices)", text: $pairingKey)
-        }
-        .disabled(client?.isConnecting == true)
-        if let message = client?.error ?? error {
-          Text(message).foregroundStyle(.red).textSelection(.enabled)
-        }
+        form
       }
       HStack {
         Spacer()
         Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
         if client?.isConnected != true {
-          Button(client?.isConnecting == true ? "Connecting…" : "Connect") { connect() }
-            .disabled(client?.isConnecting == true)
+          Button(isConnecting ? "Connecting…" : "Connect") { connect() }
+            .disabled(isConnecting)
+            .keyboardShortcut(.defaultAction)
             .buttonStyle(.borderedProminent)
         }
       }
@@ -83,25 +54,118 @@ struct AddRemoteMirrorView: View {
       }
     }
     .onChange(of: client?.enrolledConfiguration) { _, enrolled in
-      guard let enrolled, enrolled.address == address, String(enrolled.port) == port else { return }
-      pairingKey = ""
-      mirrors.savedHosts.remember(enrolled)
+      guard let enrolled else { return }
+      pairingCode = ""
+      requiresNewCode = false
+      mirrors.knownHosts.recordEnrollment(enrolled)
+    }
+    .onChange(of: client?.isConnected) { _, connected in
+      guard connected == true, let client else { return }
+      mirrors.knownHosts.recordConnection(address: client.address, port: client.port, hostID: client.verifiedHostID)
+    }
+    .onChange(of: client?.failure) { _, failure in
+      guard case .handshakeRejected = failure, pairingCode.isEmpty else { return }
+      requiresNewCode = true
+      codeFocused = true
     }
     .onDisappear { if !added { client?.close() } }
     .accessibilityIdentifier("add-remote-mirror-panel")
   }
 
-  private func connect() {
-    guard let number = UInt16(port), number > 0,
-      IPv4Address(address) != nil || IPv6Address(address) != nil
-    else {
-      error = "Enter a valid IP address and a port between 1 and 65535."
-      return
+  private var form: some View {
+    VStack(alignment: .leading, spacing: 16) {
+      Text("Enter the address shown on Host under Remote Mirror → Add a Device.")
+        .foregroundStyle(.secondary)
+      Form {
+        TextField("Address", text: $address, prompt: Text("192.168.1.5 or mini.local"))
+          .accessibilityIdentifier("remote-mirror-address")
+        TextField("Port", text: $port, prompt: Text("7880"))
+      }
+      .disabled(isConnecting)
+      if needsPairingCode {
+        VStack(spacing: 6) {
+          TextField("Pairing Code", text: $pairingCode, prompt: Text("XXXX-XXXX"))
+            .labelsHidden()
+            .font(.title.monospaced())
+            .multilineTextAlignment(.center)
+            .textFieldStyle(.roundedBorder)
+            .frame(maxWidth: 220)
+            .focused($codeFocused)
+            .disabled(isConnecting)
+            .onChange(of: pairingCode) { _, next in
+              let formatted = MirrorPairingCode.formatted(next)
+              if formatted != next { pairingCode = formatted }
+            }
+            .accessibilityIdentifier("remote-mirror-pairing-code")
+          Text("The eight-character code shown on Host under Add a Device. It expires after 60 seconds.")
+            .font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+      } else if let knownHost {
+        Label("Already paired with \(knownHost.displayName). No code is needed.", systemImage: "checkmark.seal")
+          .font(.caption).foregroundStyle(.secondary)
+      }
+      if let message = client?.error ?? error {
+        Text(message).foregroundStyle(.red).textSelection(.enabled)
+      }
     }
-    client?.close()
-    let connection = mirrors.makeClient(address: address, port: number, pairingKey: pairingKey)
-    client = connection
-    error = nil
-    connection.connect()
+  }
+
+  private func panePicker(_ client: MirrorClient) -> some View {
+    VStack(alignment: .leading, spacing: 12) {
+      VStack(alignment: .leading, spacing: 4) {
+        Text("Connected to \(hostLabel(client))").font(.headline).lineLimit(1)
+        Text("Select a pane to mirror.").foregroundStyle(.secondary)
+      }
+      if client.panes.isEmpty { Text("No open panes on this Host.") }
+      ScrollView {
+        VStack(spacing: 8) {
+          ForEach(client.panes) { pane in
+            Button {
+              added = true
+              mirrors.add(client, pane: pane)
+              dismiss()
+            } label: {
+              HStack {
+                VStack(alignment: .leading) {
+                  Text(pane.projectName ?? pane.title).font(.headline).lineLimit(1)
+                  Text(pane.subtitle ?? pane.directory).font(.caption).foregroundStyle(.secondary)
+                    .lineLimit(1)
+                }
+                Spacer()
+                Text(pane.busy ? (client.supportsTakeover ? "Take Over" : "In use") : "Mirror")
+              }
+              .padding(10).frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+            .background(.quaternary, in: RoundedRectangle(cornerRadius: 8))
+            .help(pane.title + "\n" + pane.directory)
+            .disabled(pane.busy && !client.supportsTakeover)
+          }
+        }
+      }
+      .frame(height: min(280, CGFloat(max(1, client.panes.count)) * 76))
+      Button("Refresh Panes") { client.refreshPanes() }
+        .help("Reload the list of panes on this Host")
+    }
+  }
+
+  private func hostLabel(_ client: MirrorClient) -> String {
+    mirrors.knownHosts.host(address: client.address, port: client.port)?.displayName
+      ?? MirrorKnownHost.endpointID(address: client.address, port: client.port)
+  }
+
+  private func connect() {
+    do {
+      let endpoint = try MirrorEndpointInput.endpoint(address: address, port: port)
+      let code = try MirrorEndpointInput.pairingCode(pairingCode, required: needsPairingCode)
+      client?.close()
+      let connection = mirrors.makeClient(address: endpoint.address, port: endpoint.port, pairingKey: code)
+      client = connection
+      error = nil
+      connection.connect()
+    } catch {
+      self.error = error.message
+    }
   }
 }

@@ -34,6 +34,7 @@ struct MirrorDevicePairingTests {
     defer { first.peer.close() }
     try await first.start(stage: "first pairing")
     #expect(host.devices.count == 1)
+    #expect(host.lastPairedDevice?.id == host.devices.first?.id)
     #expect(host.pairingKey.isEmpty)
     #expect(first.saved?.pairingKey.isEmpty == true)
     let firstCredential = try #require(first.saved?.credential)
@@ -74,6 +75,18 @@ struct MirrorDevicePairingTests {
     var otherMessages = other.messages.makeAsyncIterator()
     #expect(await otherMessages.next()?.kind == .panes)
     #expect(vault.identity?.devices.contains(where: { $0.id == firstCredential.deviceID }) == false)
+    // A revoked credential is rejected during the TLS handshake and must fail at once, in plain words.
+    try await listening(host)
+    let rejected = Client(port: UInt16(host.port)!, credential: firstCredential)
+    defer { rejected.peer.close() }
+    rejected.peer.start()
+    for await closed in Observations({ rejected.closed }) where closed { break }
+    #expect(!rejected.ready)
+    guard case .handshakeRejected = rejected.peer.failure else {
+      Issue.record("Expected a TLS rejection, got \(String(describing: rejected.peer.failure))")
+      return
+    }
+    #expect(rejected.reason?.contains("no longer recognizes") == true)
   }
 
   @Test(.timeLimit(.minutes(1))) func pairingConnectionCannotListAndWindowExpires() async throws {
@@ -141,38 +154,99 @@ struct MirrorDevicePairingTests {
     #expect(host.pairingExpiresAt == nil)
   }
 
-  @Test func savedHostCacheDoesNotReadUntilRequested() {
+  @Test func knownHostStoreImportsLegacyRecordsOnceAfterExplicitRequest() throws {
+    let suite = "MirrorKnownHostStoreTests-\(UUID())"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
     var reads = 0
-    let cache = MirrorSavedHostCache(load: {
-      reads += 1
-      return []
-    })
-    #expect(cache.entries.isEmpty)
-    #expect(reads == 0)
-    cache.loadIfNeeded()
-    cache.loadIfNeeded()
-    #expect(reads == 1)
     let credential = MirrorDeviceCredential(hostID: UUID(), deviceID: UUID(), key: Data(repeating: 1, count: 32))
-    let saved = MirrorSavedConnection(address: "192.0.2.1", port: 7880, pairingKey: "", credential: credential)
-    cache.remember(saved)
-    #expect(cache.entries == [saved])
+    let legacy = MirrorSavedConnection(address: "192.0.2.1", port: 7880, pairingKey: "", credential: credential)
+    let store = MirrorKnownHostStore(
+      defaults: defaults,
+      importLegacy: {
+        reads += 1
+        return [legacy]
+      }, removeCredential: { _ in })
+    #expect(store.hosts.isEmpty)
+    #expect(reads == 0)
+    store.importLegacyIfNeeded()
+    store.importLegacyIfNeeded()
+    #expect(reads == 1)
+    #expect(store.hosts.map(\.endpointID) == ["192.0.2.1:7880"])
+    #expect(store.hosts.first?.hostID == credential.hostID)
+    let reloaded = MirrorKnownHostStore(
+      defaults: defaults,
+      importLegacy: {
+        reads += 1
+        return []
+      }, removeCredential: { _ in })
+    #expect(reloaded.hasImportedLegacy)
+    #expect(reloaded.hosts.map(\.endpointID) == ["192.0.2.1:7880"])
+    reloaded.importLegacyIfNeeded()
     #expect(reads == 1)
   }
 
-  @Test func savedHostCacheCanRetryFailedExplicitLoad() {
+  @Test func knownHostStoreRetriesFailedImportAndMergesEnrollment() throws {
+    let suite = "MirrorKnownHostStoreTests-\(UUID())"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
     var reads = 0
-    let cache = MirrorSavedHostCache(load: {
-      reads += 1
-      if reads == 1 { throw MirrorCredentialVault.Failure(status: errSecInteractionNotAllowed, operation: .readHost) }
-      return []
-    })
-    cache.loadIfNeeded()
-    #expect(!cache.hasLoaded)
-    #expect(cache.notice != nil)
-    cache.loadIfNeeded()
-    #expect(cache.hasLoaded)
-    #expect(cache.notice == nil)
-    #expect(reads == 2)
+    let credential = MirrorDeviceCredential(hostID: UUID(), deviceID: UUID(), key: Data(repeating: 1, count: 32))
+    let enrolled = MirrorSavedConnection(address: "mini.local", port: 7880, pairingKey: "", credential: credential)
+    let store = MirrorKnownHostStore(
+      defaults: defaults,
+      importLegacy: {
+        reads += 1
+        if reads == 1 {
+          throw MirrorCredentialVault.Failure(status: errSecInteractionNotAllowed, operation: .readHost)
+        }
+        return [enrolled]
+      }, removeCredential: { _ in })
+    store.importLegacyIfNeeded()
+    #expect(!store.hasImportedLegacy)
+    #expect(store.notice != nil)
+    store.recordEnrollment(enrolled)
+    #expect(store.isKnown(address: "mini.local", port: 7880))
+    #expect(store.hosts.first?.pairedAt != nil)
+    store.importLegacyIfNeeded()
+    #expect(store.hasImportedLegacy)
+    #expect(store.notice == nil)
+    #expect(store.hosts.count == 1)
+    #expect(store.hosts.first?.pairedAt != nil)
+    store.recordConnection(address: "mini.local", port: 7880, hostID: credential.hostID)
+    #expect(store.hosts.first?.lastConnectedAt != nil)
+    #expect(store.hosts.first?.hostID == credential.hostID)
+  }
+
+  @Test func knownHostStoreRenamesAndForgetsWithCredentialRemoval() throws {
+    let suite = "MirrorKnownHostStoreTests-\(UUID())"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    var removed: [String] = []
+    var removalFails = true
+    let store = MirrorKnownHostStore(
+      defaults: defaults, importLegacy: { [] },
+      removeCredential: { connection in
+        if removalFails { throw MirrorCredentialVault.Failure(status: errSecIO, operation: .removeHost) }
+        removed.append(connection.endpointID)
+      })
+    let credential = MirrorDeviceCredential(hostID: UUID(), deviceID: UUID(), key: Data(repeating: 1, count: 32))
+    store.recordEnrollment(.init(address: "192.0.2.1", port: 7880, pairingKey: "", credential: credential))
+    store.recordEnrollment(.init(address: "192.0.2.2", port: 7880, pairingKey: "", credential: credential))
+    store.rename("192.0.2.2:7880", alias: "  Studio  ")
+    #expect(store.hosts.map(\.displayName) == ["192.0.2.1:7880", "Studio"])
+    store.rename("192.0.2.2:7880", alias: " ")
+    #expect(store.hosts.map(\.displayName) == ["192.0.2.1:7880", "192.0.2.2:7880"])
+    store.forget("192.0.2.1:7880")
+    #expect(store.hosts.count == 2)
+    #expect(store.notice != nil)
+    removalFails = false
+    store.forget("192.0.2.1:7880")
+    #expect(removed == ["192.0.2.1:7880"])
+    #expect(store.hosts.map(\.endpointID) == ["192.0.2.2:7880"])
+    #expect(store.notice == nil)
+    let reloaded = MirrorKnownHostStore(defaults: defaults, importLegacy: { [] }, removeCredential: { _ in })
+    #expect(reloaded.hosts.map(\.endpointID) == ["192.0.2.2:7880"])
   }
 
   @Test(.enabled(if: ProcessInfo.processInfo.environment["PROWL_RUN_KEYCHAIN_TESTS"] == "1"))

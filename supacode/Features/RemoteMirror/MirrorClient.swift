@@ -14,6 +14,9 @@ final class MirrorClient: Identifiable {
   private(set) var isConnected = false
   private(set) var isConnecting = false
   private(set) var error: String?
+  /// Why the last attempt ended before authentication, when the transport could tell.
+  private(set) var failure: MirrorConnectionFailure?
+  private(set) var verifiedHostID: UUID?
   private(set) var endReason: MirrorMessage.EndReason?
   private(set) var supportsTakeover = false
   private(set) var supportsHistory = true
@@ -65,6 +68,7 @@ final class MirrorClient: Identifiable {
   func connect() {
     guard peer == nil else { return }
     error = nil
+    failure = nil
     endReason = nil
     subscriptionID = nil
     isSubscribed = false
@@ -78,7 +82,10 @@ final class MirrorClient: Identifiable {
     }
     peer.onReady = { [weak self, weak peer] in
       guard let self, let peer, self.peer === peer else { return }
-      if let verified = peer.verifiedConfiguration { self.configuration = verified }
+      if let verified = peer.verifiedConfiguration {
+        self.configuration = verified
+        self.verifiedHostID = verified.credential?.hostID
+      }
       self.isConnected = true
       peer.send(.list)
     }
@@ -94,6 +101,7 @@ final class MirrorClient: Identifiable {
       self.isLoadingHistory = false
       self.isSubscribed = false
       self.subscriptionID = nil
+      self.failure = peer.failure
       self.error = self.error ?? reason ?? "Connection lost. Remote status is unknown."
     }
     peer.start()

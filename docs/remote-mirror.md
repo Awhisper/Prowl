@@ -10,37 +10,54 @@ it after the list was read; use the explicit **Take Over** action.
 
 Launch the Mac App with `PROWL_REMOTE_MIRROR=1`. The experiment is hidden and cannot
 start a listener otherwise. Hover over the **Remote Mirror** network button to
-preview, or click to keep it open. Under **Host**, choose a listening address
-and port, then **Start Host**. The icon is gray when stopped, muted blue when
-listening, and muted green when at least one pane is mirrored. `0.0.0.0` listens on all IPv4 interfaces; clients enter
-the Mac's reachable address instead.
+preview, or click to keep it open. Under **Host**, pick **Listen on** and a port,
+then **Start Host**. The picker offers all interfaces (`0.0.0.0`), each of this
+Mac's IPv4 interfaces by name, and this Mac only (`127.0.0.1`); a value saved
+from an earlier version appears as **Custom**. The icon is gray when stopped,
+muted blue when listening, and muted green when at least one pane is mirrored.
+A listener is reachable from the local network or a VPN; the internet cannot reach
+it unless a router forwards the port. Without a paired device key or a live pairing
+code, a connection fails during the TLS handshake.
 
-**Add a Device** opens a modal pairing sheet with a 60-second code and connection
-instructions. If the listener is restarting, the sheet waits before generating
-its first code. **Refresh Code** replaces the code; **Cancel** invalidates an unused
-code without stopping Host or revoking a device that already paired. On the other
-Mac, open **Remote Mirror → Client → Connect to Host** and enter the address, port,
-and code. On iOS, use the connection editor. Successful enrollment
-consumes the code. The client saves its device credential in Keychain, then opens a
-new authenticated connection. A pairing-only connection cannot list or operate
-panes. No extra long-lived code is required. A saved enrollment remains available
-for Retry if the first runtime connection fails.
+**Add a Device** opens a modal pairing sheet. It lists the addresses a Client can
+enter (the Bonjour name and each interface reachable through the current listen
+setting, each with the port and a copy button), then a large 60-second code with a
+copy button (⌘C). If the listener is restarting, the sheet waits before generating
+its first code; if Host is off, the sheet offers **Start Host**. **Refresh Code**
+replaces the code; **Cancel** invalidates an unused code without stopping Host or
+revoking a device that already paired. When a device completes pairing, the sheet
+shows **Paired with** its name and closes by itself. On the other Mac, open
+**Remote Mirror → Client → Connect to a New Host** and enter the address (an IP or a
+host name such as `mini.local`), port, and code. On iOS, use the connection editor.
+Successful enrollment consumes the code. The client saves its device credential in
+Keychain, then opens a new authenticated connection. A pairing-only connection
+cannot list or operate panes. No extra long-lived code is required. A saved
+enrollment remains available for Retry if the first runtime connection fails.
 
-On Mac, click **Remote Mirror** or **Load Saved Hosts** to read previously paired
-Host addresses. Hover previews use the in-memory list and never read Keychain.
-The list is cached for the app session and updated after new enrollment. Click
-**Connect** beside one to authenticate and open the pane picker without entering
-the address or code again. Saved entries do not imply that the Host is online;
-connection failures appear in the connection sheet. For a manually entered,
-previously paired address, leave the code blank. Saved credentials survive
+On Mac, paired Hosts are listed under **Client** with their name and last
+connection time. This list holds addresses only, stored outside Keychain, so hover
+previews show it without reading credentials. Records written by an earlier
+version are imported from Keychain once, after the first click on the Remote
+Mirror button; if that import fails, a hint keeps **Connect to a New Host**
+available and **Try Again** repeats it. Click **Connect** beside a Host to
+authenticate and open the pane picker without entering the address or code again.
+The **…** menu offers **Rename…**, a name shown on this Mac only, and **Forget**,
+which removes the saved access. Saved entries do not imply that the Host is
+online; connection failures appear in the connection sheet. In the connection
+form the code field appears only when this Mac has no saved access for the
+address. If the Host no longer recognizes this Mac, for example after **Revoke**,
+the attempt fails at once with an explanation and the code field appears. A
+refused port, an unreachable address, or an unresolved name also fails at once;
+an unanswered connection gives up after ten seconds. Saved credentials survive
 Host stop/start and App restart. They do not discover a changed IP address. The iOS
 connection editor can retain a device credential while updating the Host address;
 the client checks the Host identity after connecting. A new Host or revoked device
 requires a fresh pairing window. Old experiment keys are not migrated.
 
-The Host section lists paired devices, their connection state, active mirror count,
-mirrored pane names, and **Revoke**. A device browsing panes can be connected with
-zero mirrors.
+The Host section lists paired devices with **Connected** and the active mirror
+count, **Last seen** for a device that is offline, or **Paired · never connected**,
+plus mirrored pane names and **Revoke**, which asks for confirmation. A device
+browsing panes can be connected with zero mirrors.
 Device labels use the Mac local host name or the iOS system device name; pairing
 does not resolve a DNS name to obtain this label.
 
@@ -48,9 +65,9 @@ Revocation removes the persisted secret and disconnects all connections for that
 other devices remain connected. Device records are limited to 64. If enrollment
 succeeds on Host but its response or the client's save is lost, open a new window
 and remove the unused device record. Unreadable saved entries are omitted from the Host list without deleting them.
-If the list cannot load, a neutral hint keeps **Connect to Host** available; **Load Saved Hosts** retries
-the failed lookup. Errors
-that prevent pairing or connection remain visible in plain language; Keychain
+Errors that prevent pairing or connection remain visible in plain language, naming
+the address and the reason; a port already in use or an address this Mac does not
+have stops Host with the same kind of message. Keychain
 status codes are logged for diagnosis. Credentials are never stored as plaintext.
 
 The pairing window changes the listener's TLS keys. Prowl waits for the old

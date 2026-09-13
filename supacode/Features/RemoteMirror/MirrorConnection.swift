@@ -10,6 +10,8 @@ final class MirrorConnection {
   var onReady: (() -> Void)?
   var onHandshakeFailure: (() -> Void)?
   var onClose: ((String?) -> Void)?
+  /// Set when the connection ends before it became ready.
+  private(set) var failure: MirrorConnectionFailure?
   private var closed = false
   private var finishing = false
   private var queuedBytes = 0
@@ -84,11 +86,21 @@ final class MirrorConnection {
             }
           }
         case .failed(let error):
-          if !self.becameReady { self.onHandshakeFailure?() }
+          if !self.becameReady {
+            self.onHandshakeFailure?()
+            self.failure = MirrorConnectionFailure(error)
+          }
           self.close(error.localizedDescription)
         case .cancelled: self.close(nil)
         case .waiting(let error):
-          if self.becameReady { self.close("Connection lost: \(error.localizedDescription)") }
+          if self.becameReady {
+            self.close("Connection lost: \(error.localizedDescription)")
+          } else {
+            // A refused port or rejected TLS key reports as waiting; there is nothing to wait for.
+            self.onHandshakeFailure?()
+            self.failure = MirrorConnectionFailure(error)
+            self.close(error.localizedDescription)
+          }
         default: break
         }
       }
@@ -150,7 +162,9 @@ final class MirrorConnection {
     let timeout: Duration = becameReady ? .seconds(8) : handshakeTimeout
     deadline = Task { [weak self] in
       do { try await clock.sleep(for: timeout) } catch { return }
-      self?.close("Remote connection timed out. The other side is no longer responding.")
+      guard let self else { return }
+      if !self.becameReady { self.failure = .timedOut }
+      self.close("Remote connection timed out. The other side is no longer responding.")
     }
   }
 
@@ -210,6 +224,13 @@ nonisolated enum MirrorPairingCode {
       throw MirrorProtocolError.invalidPairingKey
     }
     return code
+  }
+
+  /// Live formatting for a code field: uppercase, at most eight symbols, a hyphen after four.
+  static func formatted(_ input: String) -> String {
+    let symbols = input.uppercased().filter { ($0.isLetter || $0.isNumber) && $0.isASCII }.prefix(8)
+    guard symbols.count > 4 else { return String(symbols) }
+    return String(symbols.prefix(4)) + "-" + String(symbols.dropFirst(4))
   }
 
   static func generate() throws -> String {
