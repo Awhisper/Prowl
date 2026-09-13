@@ -39,6 +39,8 @@ final class MirrorHost {
 
   private(set) var onlineDeviceIDs: Set<UUID> = []
   private(set) var devices: [MirrorPairedDevice] = []
+  /// The device that completed the current pairing window; cleared when a new code is issued.
+  private(set) var lastPairedDevice: MirrorPairedDevice?
   private(set) var pairingExpiresAt: Date?
   @ObservationIgnored private var identity: MirrorHostIdentity?
   @ObservationIgnored private var pairingTask: Task<Void, Never>?
@@ -67,6 +69,7 @@ final class MirrorHost {
   }
 
   func cancelPairing() {
+    lastPairedDevice = nil
     guard pairingExpiresAt != nil else { return }
     expirePairing()
   }
@@ -75,6 +78,7 @@ final class MirrorHost {
     guard isRunning, !isStarting else { return }
     do {
       pairingKey = try MirrorPairingCode.generate()
+      lastPairedDevice = nil
       pairingExpiresAt = Date().addingTimeInterval(60)
       pairingTask?.cancel()
       let clock = clock
@@ -153,10 +157,13 @@ final class MirrorHost {
     // Code security: hidden experimental UI must not leave a reachable listener.
     guard enabled, !isStarting, !isRunning, listener == nil else { return }
     error = nil
+    guard let portNumber = UInt16(port), portNumber > 0,
+      IPv4Address(address) != nil || IPv6Address(address) != nil
+    else {
+      self.error = "Enter a listen address of this Mac and a port between 1 and 65535."
+      return
+    }
     do {
-      guard let portNumber = UInt16(port), portNumber > 0,
-        IPv4Address(address) != nil || IPv6Address(address) != nil
-      else { throw MirrorProtocolError.invalidMessage }
       let saved = try loadIdentity() ?? MirrorHostIdentity(id: UUID(), devices: [])
       try saveIdentity(saved)
       identity = saved
@@ -236,8 +243,9 @@ final class MirrorHost {
           self.completePairings()
           self.onStarted?()
         case .failed(let error):
+          SupaLogger("RemoteMirror").warning("Host listener failed: \(error)")
           self.stop()
-          self.error = error.localizedDescription
+          self.error = MirrorConnectionFailure(error).listenerMessage(address: self.address, port: self.port)
         default: break
         }
       }
@@ -259,6 +267,7 @@ final class MirrorHost {
     pairingTask?.cancel()
     pairingTask = nil
     pairingExpiresAt = nil
+    lastPairedDevice = nil
     for task in authenticationDeadlines.values { task.cancel() }
     authenticationDeadlines.removeAll()
     challenges.removeAll()
@@ -439,6 +448,7 @@ final class MirrorHost {
       }
       // The client reconnects immediately with this key, so the replacement listener must be ready.
       peers[peerID]?.send(.paired(credential), closeAfterSending: true)
+      lastPairedDevice = devices.first { $0.id == credential.deviceID }
     }
   }
 

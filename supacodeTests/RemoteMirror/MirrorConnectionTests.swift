@@ -83,6 +83,28 @@ struct MirrorConnectionTests {
     #expect(!failedHandshake)
   }
 
+  @Test(.timeLimit(.minutes(1))) func refusedConnectionFailsBeforeTheHandshakeDeadline() async throws {
+    let clock = TestClock()
+    let port = try MirrorTestPort.unusedPort()
+    let peer = MirrorConnection(
+      NWConnection(host: "127.0.0.1", port: .init(rawValue: port)!, using: .tcp), clock: clock)
+    let closed = AsyncStream<String?>.makeStream()
+    var failedHandshake = false
+    peer.onClose = { closed.continuation.yield($0) }
+    peer.onHandshakeFailure = { failedHandshake = true }
+    defer {
+      peer.close()
+      closed.continuation.finish()
+    }
+    peer.start()
+    var reasons = closed.stream.makeAsyncIterator()
+    // The clock never advances: only the waiting state can end this connection.
+    let reason = await reasons.next()
+    #expect(reason != nil)
+    #expect(peer.failure == .refused)
+    #expect(failedHandshake)
+  }
+
   @Test(.timeLimit(.minutes(1))) func silentPeerTimesOutDespiteOutgoingHeartbeats() async throws {
     let listener = try NWListener(using: .tcp)
     let listening = AsyncStream<Void>.makeStream()

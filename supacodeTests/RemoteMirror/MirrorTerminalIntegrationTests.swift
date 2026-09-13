@@ -34,7 +34,9 @@ struct MirrorTerminalIntegrationTests {
     fixture.host.start()
     try await fixture.wait("Occupied Host port rejected") { fixture.host.error != nil }
     #expect(!fixture.host.isRunning)
-    #expect(fixture.host.error == NWError.posix(.EADDRINUSE).localizedDescription)
+    #expect(
+      fixture.host.error
+        == MirrorConnectionFailure.addressInUse.listenerMessage(address: fixture.host.address, port: fixture.host.port))
     try await fixture.startHost()
     #expect(fixture.host.isRunning)
     #expect(fixture.host.port != String(port.rawValue))
@@ -495,7 +497,8 @@ struct MirrorTerminalIntegrationTests {
         host.start()
         try await wait("Host listener") { host.isRunning || host.error != nil }
         if host.isRunning { return }
-        guard attempt < 3, host.error == NWError.posix(.EADDRINUSE).localizedDescription else {
+        let occupied = MirrorConnectionFailure.addressInUse.listenerMessage(address: host.address, port: host.port)
+        guard attempt < 3, host.error == occupied else {
           throw Failure(
             reason:
               "Host startup failed at \(host.address):\(host.port): \(host.error ?? "unknown")")

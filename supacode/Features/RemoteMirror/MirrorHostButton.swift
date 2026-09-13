@@ -6,7 +6,7 @@ struct MirrorHostButton: View {
   @Environment(ToolbarPopoverCoordinator.self) private var popovers
   @Dependency(FeatureFlags.self) private var featureFlags
   @State private var sheet: MirrorSheet?
-  @State private var connectionToOpen: MirrorSavedConnection?
+  @State private var connectionToOpen: MirrorKnownHost?
 
   private enum MirrorSheet: String, Identifiable {
     case pairing, connect
@@ -28,7 +28,8 @@ struct MirrorHostButton: View {
       let isPresented = popovers.presented == .mirror
       Button {
         popovers.toggle(.mirror)
-        if popovers.presented == .mirror { mirrors.savedHosts.loadIfNeeded() }
+        // Keychain is read only after a click; hover previews stay in memory.
+        if popovers.presented == .mirror { mirrors.knownHosts.importLegacyIfNeeded() }
       } label: {
         Image(systemName: "network").foregroundStyle(tint)
       }
@@ -111,104 +112,221 @@ private struct MirrorSettingsView: View {
   let interact: () -> Void
   let pair: () -> Void
   let connect: () -> Void
-  let reconnect: (MirrorSavedConnection) -> Void
+  let reconnect: (MirrorKnownHost) -> Void
+  @State private var interfaces: [MirrorNetworkInterface] = []
+  @State private var deviceToRevoke: MirrorPairedDevice?
+  @State private var hostToRename: MirrorKnownHost?
+  @State private var alias = ""
+
+  private var listenOptions: [ListenOption] {
+    var options = [ListenOption(address: MirrorHostAddresses.allIPv4, label: "All interfaces (0.0.0.0)")]
+    for interface in interfaces where interface.isIPv4 && !interface.isLoopback {
+      options.append(ListenOption(address: interface.address, label: interface.label + " · " + interface.address))
+    }
+    options.append(ListenOption(address: MirrorHostAddresses.loopback, label: "This Mac only (127.0.0.1)"))
+    if !options.contains(where: { $0.address == host.address }) {
+      options.append(ListenOption(address: host.address, label: "Custom · " + host.address))
+    }
+    return options
+  }
+
+  private var hostStatus: String {
+    if host.isStarting { return "Starting…" }
+    guard host.isRunning else { return "Host is off" }
+    return "Listening · " + Self.mirrors(host.subscriberCount)
+  }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
-      Text("Remote Mirror").font(.title2.bold())
-      VStack(alignment: .leading, spacing: 12) {
-        Text("Host").font(.headline)
-        Text("Start a service so other Prowl apps on your network can connect to this Mac.")
-          .foregroundStyle(.secondary)
-        Form {
-          TextField("Listen IP", text: $host.address)
-            .help("Use 0.0.0.0 for all IPv4 interfaces, or this Mac’s local IP.")
-          TextField("Port", text: $host.port)
-            .help("The network port other Prowl apps connect to")
-        }
-        .disabled(host.isRunning || host.isStarting)
-        HStack {
-          Text(
-            host.isRunning
-              ? "Listening · \(host.subscriberCount) mirrors" : (host.isStarting ? "Starting…" : "Host is off")
-          )
-          .font(.callout).foregroundStyle(.secondary)
-          Spacer()
-          if host.isRunning || host.isStarting {
-            Button("Stop Host", role: .destructive) {
-              interact()
-              host.stop()
-            }
-            .help("Disconnect mirrors and stop listening; local terminals keep running")
-          } else {
-            Button("Start Host") {
-              interact()
-              host.start()
-            }.buttonStyle(.borderedProminent)
-              .help("Allow paired Prowl devices to connect to this Mac")
-          }
-        }
-        if host.isRunning {
-          Button("Add a Device…", action: pair)
-            .help("Open a single-use pairing code with a 60-second expiry")
-            .disabled(host.isStarting)
-        }
-        ForEach(host.devices) { device in
-          HStack(alignment: .top) {
-            VStack(alignment: .leading, spacing: 4) {
-              Text(device.name).lineLimit(1)
-              let panes = host.mirroredPanes(for: device.id)
-              Text(host.isOnline(device.id) ? "Connected · \(panes.count) mirrors" : "Offline")
-                .font(.caption).foregroundStyle(.secondary)
-              ForEach(panes) { pane in
-                Text(pane.title).font(.caption).foregroundStyle(.secondary).lineLimit(1)
-                  .help(pane.title + "\n" + pane.directory)
-              }
-            }
-            Spacer()
-            Button("Revoke", role: .destructive) {
-              interact()
-              host.revoke(device.id)
-            }
-            .help("Disconnect this device and require it to pair again")
-          }
-        }
-        if let error = host.error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
-        Text("Closing this panel keeps Host running.").font(.caption).foregroundStyle(.secondary)
+      HStack(alignment: .firstTextBaseline) {
+        Text("Remote Mirror").font(.headline)
+        Spacer()
+        Text(hostStatus).font(.subheadline).foregroundStyle(.secondary)
       }
+      hostSection
       Divider()
-      VStack(alignment: .leading, spacing: 12) {
-        Text("Client").font(.headline)
-        Text("Connect to Prowl on another device and mirror one of its terminal panes.")
-          .foregroundStyle(.secondary)
-        ForEach(mirrors.savedHosts.entries, id: \.endpointID) { saved in
-          HStack {
-            VStack(alignment: .leading, spacing: 4) {
-              Text(saved.endpointID).lineLimit(1)
-              Text("Paired Host").font(.caption).foregroundStyle(.secondary)
-            }
-            Spacer()
-            Button("Connect") { reconnect(saved) }
-              .help("Connect to this saved Host and select a pane")
-          }
-        }
-        if let notice = mirrors.savedHosts.notice { Text(notice).font(.caption).foregroundStyle(.secondary) }
-        if !mirrors.savedHosts.hasLoaded {
-          Button("Load Saved Hosts") {
-            interact()
-            mirrors.savedHosts.loadIfNeeded()
-          }
-          .help("Read previously paired Hosts from secure storage")
-        }
-        Button("Connect to Host…", action: connect)
-          .help("Enter another device’s address and pair with its Prowl app")
-      }
+      clientSection
     }
-    .padding(24)
+    .padding(20)
     .frame(width: 460)
     .accessibilityIdentifier("remote-mirror-host-panel")
+    .onAppear { interfaces = MirrorHostAddresses.current() }
     .onChange(of: host.address) { _, _ in interact() }
     .onChange(of: host.port) { _, _ in interact() }
+    .confirmationDialog(
+      "Revoke \(deviceToRevoke?.name ?? "this device")?",
+      isPresented: Binding(get: { deviceToRevoke != nil }, set: { if !$0 { deviceToRevoke = nil } }),
+      presenting: deviceToRevoke
+    ) { device in
+      Button("Revoke", role: .destructive) { host.revoke(device.id) }
+    } message: { _ in
+      Text("The device is disconnected and must pair again before it can mirror this Mac.")
+    }
+    .alert(
+      "Rename Host",
+      isPresented: Binding(get: { hostToRename != nil }, set: { if !$0 { hostToRename = nil } }),
+      presenting: hostToRename
+    ) { known in
+      TextField("Name", text: $alias, prompt: Text(known.endpointID))
+      Button("Save") { mirrors.knownHosts.rename(known.id, alias: alias) }
+      Button("Cancel", role: .cancel) {}
+    } message: { known in
+      Text("The name is shown instead of \(known.endpointID) on this Mac only.")
+    }
+  }
+
+  private var hostSection: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      Text("Host").font(.subheadline.weight(.semibold))
+      Text("Let paired Prowl apps on your network mirror this Mac’s terminals.")
+        .foregroundStyle(.secondary)
+      // Static text while running: a disabled, still-focused field keeps its selection highlight.
+      let editable = !(host.isRunning || host.isStarting)
+      // Center rows: the pop-up button reports no usable text baseline, so baseline alignment floats the label.
+      Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
+        GridRow {
+          Text("Listen on").gridColumnAlignment(.trailing)
+          if editable {
+            // SwiftUI's menu picker keeps its intrinsic width and grows after its first open;
+            // an AppKit pop-up button fills the row from the start.
+            ListenAddressPopUp(options: listenOptions, selection: $host.address)
+              .frame(maxWidth: .infinity)
+              .help("Which of this Mac’s addresses accept connections")
+              .accessibilityLabel("Listen on")
+          } else {
+            Text(listenOptions.first { $0.address == host.address }?.label ?? host.address)
+          }
+        }
+        GridRow {
+          Text("Port").gridColumnAlignment(.trailing)
+          if editable {
+            TextField("Port", text: $host.port)
+              .labelsHidden()
+              .frame(width: 100)
+              .help("The network port other Prowl apps connect to")
+          } else {
+            Text(host.port)
+          }
+        }
+      }
+      HStack {
+        Spacer()
+        if host.isRunning || host.isStarting {
+          Button("Add a Device…", action: pair)
+            .help("Show a single-use pairing code with a 60-second expiry")
+            .disabled(host.isStarting)
+          Button("Stop Host", role: .destructive) {
+            interact()
+            host.stop()
+          }
+          .help("Disconnect mirrors and stop listening; local terminals keep running")
+        } else {
+          Button("Start Host") {
+            interact()
+            host.start()
+          }
+          .buttonStyle(.borderedProminent)
+          .help("Allow paired Prowl devices to connect to this Mac")
+        }
+      }
+      ForEach(host.devices) { device in
+        HStack(alignment: .top) {
+          VStack(alignment: .leading, spacing: 4) {
+            Text(device.name).lineLimit(1)
+            let panes = host.mirroredPanes(for: device.id)
+            Text(deviceStatus(device, mirrorCount: panes.count)).font(.caption).foregroundStyle(.secondary)
+            ForEach(panes) { pane in
+              Text(pane.title).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                .help(pane.title + "\n" + pane.directory)
+            }
+          }
+          Spacer()
+          Button("Revoke", role: .destructive) {
+            interact()
+            deviceToRevoke = device
+          }
+          .help("Disconnect this device and require it to pair again")
+        }
+      }
+      if let error = host.error { Text(error).foregroundStyle(.red).textSelection(.enabled) }
+      Text("Closing this panel keeps Host running.").font(.caption).foregroundStyle(.secondary)
+    }
+  }
+
+  private var clientSection: some View {
+    VStack(alignment: .leading, spacing: 12) {
+      Text("Client").font(.subheadline.weight(.semibold))
+      Text("Mirror a terminal pane from Prowl on another Mac.")
+        .foregroundStyle(.secondary)
+      ForEach(mirrors.knownHosts.hosts) { known in
+        HStack {
+          VStack(alignment: .leading, spacing: 4) {
+            Text(known.displayName).lineLimit(1)
+            Text(knownHostCaption(known)).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+          }
+          Spacer()
+          Button("Connect") { reconnect(known) }
+            .help("Connect to this Host and select a pane")
+          Menu {
+            Button("Rename…") {
+              interact()
+              alias = known.alias ?? ""
+              hostToRename = known
+            }
+            Button("Forget", role: .destructive) {
+              interact()
+              mirrors.knownHosts.forget(known.id)
+            }
+          } label: {
+            Label("More", systemImage: "ellipsis.circle").labelStyle(.iconOnly)
+          }
+          .menuStyle(.borderlessButton)
+          .menuIndicator(.hidden)
+          .fixedSize()
+          .help("Rename this Host or forget its saved access")
+        }
+      }
+      if mirrors.knownHosts.hosts.isEmpty, mirrors.knownHosts.hasImportedLegacy, mirrors.knownHosts.notice == nil {
+        Text("No paired Hosts yet.").font(.caption).foregroundStyle(.secondary)
+      }
+      if !mirrors.knownHosts.hasImportedLegacy, mirrors.knownHosts.notice == nil {
+        Text("Hosts paired with an earlier version appear after you click the Remote Mirror button.")
+          .font(.caption).foregroundStyle(.secondary)
+      }
+      if let notice = mirrors.knownHosts.notice {
+        Text(notice).font(.caption).foregroundStyle(.secondary)
+        if !mirrors.knownHosts.hasImportedLegacy {
+          Button("Try Again") {
+            interact()
+            mirrors.knownHosts.importLegacyIfNeeded()
+          }
+          .help("Read previously paired Hosts from secure storage again")
+        }
+      }
+      Button("Connect to a New Host…", action: connect)
+        .help("Enter another Mac’s address and its pairing code")
+    }
+  }
+
+  private func deviceStatus(_ device: MirrorPairedDevice, mirrorCount: Int) -> String {
+    if host.isOnline(device.id) { return "Connected · " + Self.mirrors(mirrorCount) }
+    guard let seen = device.lastSeen else { return "Paired · never connected" }
+    return "Last seen " + seen.formatted(.relative(presentation: .named))
+  }
+
+  private func knownHostCaption(_ known: MirrorKnownHost) -> String {
+    var parts: [String] = []
+    if known.alias != nil { parts.append(known.endpointID) }
+    if let connected = known.lastConnectedAt {
+      parts.append("Last connected " + connected.formatted(.relative(presentation: .named)))
+    } else {
+      parts.append("Never connected")
+    }
+    return parts.joined(separator: " · ")
+  }
+
+  private static func mirrors(_ count: Int) -> String {
+    count == 1 ? "1 mirror" : "\(count) mirrors"
   }
 }
 
@@ -218,51 +336,63 @@ private struct MirrorPairingView: View {
   @State private var hasRequestedCode = false
   @State private var copied = false
   @State private var copyError: String?
+  @State private var interfaces: [MirrorNetworkInterface] = []
+  @State private var dismissTask: Task<Void, Never>?
+
+  private var reachable: [MirrorNetworkInterface] {
+    MirrorHostAddresses.reachable(listenAddress: host.address, interfaces: interfaces)
+  }
+
+  private var localName: String? {
+    guard host.address != MirrorHostAddresses.loopback else { return nil }
+    return MirrorHostAddresses.localHostName()
+  }
 
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
       Text("Add a Device").font(.title2.bold())
-      Text(
-        "On the other device, open Prowl’s Remote Mirror button. "
-          + "Under Client, choose Connect to Host and enter this Mac’s address and the code below."
-      )
-      .foregroundStyle(.secondary)
-      if let expires = host.pairingExpiresAt {
-        Text(host.pairingKey).font(.title2.monospaced()).textSelection(.enabled)
-        HStack {
-          Text("Code expires in")
-          Text(expires, style: .timer).monospacedDigit()
-        }.font(.callout).foregroundStyle(.secondary)
-        Button(copied ? "Copied" : "Copy Pairing Code") {
-          NSPasteboard.general.clearContents()
-          copied = NSPasteboard.general.setString(host.pairingKey, forType: .string)
-          copyError = copied ? nil : "Unable to copy the pairing code."
-        }
-        .help("Copy the single-use pairing code")
-        .accessibilityIdentifier("remote-mirror-copy-key")
-      } else if !host.isRunning && !host.isStarting {
-        Text("Host is off. Start Host before pairing a device.").foregroundStyle(.secondary)
-      } else if !hasRequestedCode || host.isStarting {
-        ProgressView("Preparing pairing…")
+      if let paired = host.lastPairedDevice {
+        Label("Paired with \(paired.name)", systemImage: "checkmark.circle.fill")
+          .font(.title3).foregroundStyle(.green)
+        Text("The device can now connect to this Mac and select a pane.").foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
       } else {
-        Text("The code was used or expired. Refresh to pair another device.")
-          .foregroundStyle(.secondary)
+        // Sheets propose no height; without fixedSize multi-line text collapses to one truncated line.
+        Text(
+          "On the other device, open Remote Mirror → Client → Connect to a New Host. "
+            + "Enter one of these addresses with the port, then the code below."
+        )
+        .foregroundStyle(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+        addresses
+        code
       }
-      if let error = copyError ?? host.error { Text(error).foregroundStyle(.red) }
+      if let error = copyError ?? host.error {
+        Text(error).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+      }
       HStack {
-        Button("Cancel", role: .cancel) {
+        Button(host.lastPairedDevice == nil ? "Cancel" : "Done") {
           host.cancelPairing()
           dismiss()
         }
         .keyboardShortcut(.cancelAction)
         .help("Close this window and invalidate the unused code")
         Spacer()
-        Button("Refresh Code") { host.addDevice() }
-          .disabled(host.isStarting || !host.isRunning)
-          .help("Invalidate the old code and create a new 60-second code")
+        if host.lastPairedDevice == nil {
+          if !host.isRunning && !host.isStarting {
+            Button("Start Host") { host.start() }
+              .buttonStyle(.borderedProminent)
+              .help("Start listening, then create a pairing code")
+          } else {
+            Button("Refresh Code") { host.addDevice() }
+              .disabled(host.isStarting || !host.isRunning)
+              .help("Invalidate the old code and create a new 60-second code")
+          }
+        }
       }
     }
     .padding(24).frame(width: 440)
+    .onAppear { interfaces = MirrorHostAddresses.current() }
     .onChange(of: host.isStarting, initial: true) { _, starting in
       guard !hasRequestedCode, !starting, host.isRunning else { return }
       hasRequestedCode = true
@@ -272,6 +402,147 @@ private struct MirrorPairingView: View {
       copied = false
       copyError = nil
     }
-    .onDisappear { host.cancelPairing() }
+    .onChange(of: host.lastPairedDevice) { _, paired in
+      guard paired != nil else { return }
+      dismissTask?.cancel()
+      dismissTask = Task {
+        try? await Task.sleep(for: .seconds(1.5))
+        guard !Task.isCancelled else { return }
+        dismiss()
+      }
+    }
+    .onDisappear {
+      dismissTask?.cancel()
+      host.cancelPairing()
+    }
+  }
+
+  private var addresses: some View {
+    VStack(alignment: .leading, spacing: 8) {
+      Text("This Mac’s address").font(.subheadline.weight(.semibold))
+      // A grid lets the label column fit names like Thunderbolt Bridge without a fixed width.
+      Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 6) {
+        if let localName {
+          addressRow(label: "Name", value: localName + ":" + host.port)
+        }
+        ForEach(reachable) { interface in
+          addressRow(label: interface.label, value: interface.address + ":" + host.port)
+        }
+      }
+      if reachable.isEmpty, localName == nil {
+        Text("No network address found. Connect this Mac to a network.").font(.caption).foregroundStyle(.secondary)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+      Text(
+        "Reachable on your local network or VPN. The internet cannot reach this port unless your router forwards it."
+      )
+      .font(.caption).foregroundStyle(.secondary)
+      .fixedSize(horizontal: false, vertical: true)
+    }
+  }
+
+  private func addressRow(label: String, value: String) -> some View {
+    GridRow {
+      Text(label).foregroundStyle(.secondary).lineLimit(1)
+      Text(value).font(.body.monospaced()).textSelection(.enabled).lineLimit(1)
+        .frame(maxWidth: .infinity, alignment: .leading)
+      Button {
+        copy(value)
+      } label: {
+        Label("Copy \(value)", systemImage: "doc.on.doc").labelStyle(.iconOnly)
+      }
+      .buttonStyle(.borderless)
+      .help("Copy \(value)")
+    }
+  }
+
+  private var code: some View {
+    VStack(spacing: 8) {
+      if let expires = host.pairingExpiresAt {
+        HStack(spacing: 12) {
+          Text(host.pairingKey)
+            .font(.largeTitle.monospaced().weight(.semibold))
+            .textSelection(.enabled)
+            .accessibilityIdentifier("remote-mirror-pairing-key")
+          Button {
+            copy(host.pairingKey)
+          } label: {
+            Label(copied ? "Copied" : "Copy the pairing code", systemImage: copied ? "checkmark" : "doc.on.doc")
+              .labelStyle(.iconOnly)
+          }
+          .buttonStyle(.borderless)
+          .keyboardShortcut("c", modifiers: .command)
+          .help("Copy the pairing code (⌘C)")
+          .accessibilityIdentifier("remote-mirror-copy-key")
+        }
+        HStack(spacing: 4) {
+          Text("Expires in")
+          Text(expires, style: .timer).monospacedDigit()
+        }
+        .font(.callout).foregroundStyle(.secondary)
+      } else if !host.isRunning && !host.isStarting {
+        Text("Host is off. Start Host to create a pairing code.").foregroundStyle(.secondary)
+      } else if !hasRequestedCode || host.isStarting {
+        ProgressView("Preparing pairing…")
+      } else {
+        Text("The code expired. Refresh to create a new one.").foregroundStyle(.secondary)
+      }
+    }
+    .frame(maxWidth: .infinity)
+    .padding(.vertical, 8)
+  }
+
+  private func copy(_ value: String) {
+    NSPasteboard.general.clearContents()
+    let done = NSPasteboard.general.setString(value, forType: .string)
+    copied = done && value == host.pairingKey
+    copyError = done ? nil : "Unable to copy to the clipboard."
+  }
+}
+
+private struct ListenOption: Identifiable {
+  let address: String
+  let label: String
+  var id: String { address }
+}
+
+/// AppKit pop-up button: fills the proposed width, which SwiftUI's menu picker does not.
+private struct ListenAddressPopUp: NSViewRepresentable {
+  let options: [ListenOption]
+  @Binding var selection: String
+
+  func makeNSView(context: Context) -> NSPopUpButton {
+    let button = NSPopUpButton(frame: .zero, pullsDown: false)
+    button.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    button.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    button.target = context.coordinator
+    button.action = #selector(Coordinator.changed(_:))
+    return button
+  }
+
+  func updateNSView(_ button: NSPopUpButton, context: Context) {
+    context.coordinator.parent = self
+    if button.itemTitles != options.map(\.label) {
+      button.removeAllItems()
+      for option in options {
+        button.addItem(withTitle: option.label)
+        button.lastItem?.representedObject = option.address
+      }
+    }
+    if let index = options.firstIndex(where: { $0.address == selection }) {
+      button.selectItem(at: index)
+    }
+  }
+
+  func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
+
+  final class Coordinator: NSObject {
+    var parent: ListenAddressPopUp
+    init(parent: ListenAddressPopUp) { self.parent = parent }
+
+    @objc func changed(_ sender: NSPopUpButton) {
+      guard let address = sender.selectedItem?.representedObject as? String else { return }
+      parent.selection = address
+    }
   }
 }

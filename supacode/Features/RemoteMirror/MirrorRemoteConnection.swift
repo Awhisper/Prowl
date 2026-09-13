@@ -28,6 +28,8 @@ final class MirrorRemoteConnection: MirrorTransport {
   var onMessage: ((MirrorMessage) -> Void)?
   var onClose: ((String?) -> Void)?
   private(set) var verifiedConfiguration: MirrorSavedConnection?
+  /// Set when the transport ended before authentication completed.
+  private(set) var failure: MirrorConnectionFailure?
   private var configuration: MirrorSavedConnection
   private var connection: MirrorConnection?
   private var challenge: MirrorMessage.Challenge?
@@ -70,16 +72,25 @@ final class MirrorRemoteConnection: MirrorTransport {
       } else {
         parameters = try MirrorConnection.parameters(pairingKey: configuration.pairingKey)
       }
+      // A refused or rejected connection is reported at once; ten seconds covers a slow network.
       let peer = MirrorConnection(
         NWConnection(
           host: .init(configuration.address),
-          port: .init(rawValue: configuration.port)!, using: parameters))
+          port: .init(rawValue: configuration.port)!, using: parameters),
+        handshakeTimeout: .seconds(10))
       connection = peer
+      let pairing = configuration.credential == nil
+      let endpoint = configuration.endpointID
       peer.onMessage = { [weak self] in self?.receive($0) }
-      peer.onClose = { [weak self] reason in
+      peer.onClose = { [weak self, weak peer] reason in
         guard let self, !self.closed else { return }
         self.closed = true
-        self.onClose?(reason)
+        if let failure = peer?.failure {
+          self.failure = failure
+          self.onClose?(failure.clientMessage(endpoint: endpoint, pairing: pairing))
+        } else {
+          self.onClose?(reason)
+        }
       }
       peer.start()
     } catch {

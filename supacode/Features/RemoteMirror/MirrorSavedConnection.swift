@@ -93,4 +93,12 @@ nonisolated struct MirrorSavedConnection: Codable, Equatable {
     }
   }
 
+  /// Removes this endpoint's credential, and the last-used record when it points at the same Host.
+  func forget(service: String? = nil) throws {
+    try Self.remove(account: "host:" + endpointID, service: service)
+    if let last = try Self.load(service: service), last.endpointID == endpointID {
+      try Self.remove(service: service)
+    }
+  }
+
 }
