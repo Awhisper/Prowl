@@ -2,6 +2,7 @@ import AppKit
 import ComposableArchitecture
 import Darwin
 import GhosttyKit
+import Network
 import Observation
 import SwiftUI
 import Synchronization
@@ -12,6 +13,33 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct MirrorTerminalIntegrationTests {
+  @Test(.timeLimit(.minutes(1))) func initialHostStartRecoversFromOccupiedPort() async throws {
+    let fixture = try Fixture()
+    defer { fixture.close() }
+    let occupied = try NWListener(using: .tcp, on: .any)
+    let ready = AsyncStream<Void>.makeStream()
+    occupied.stateUpdateHandler = { state in
+      if case .ready = state { ready.continuation.yield(()) }
+    }
+    occupied.newConnectionHandler = { $0.cancel() }
+    occupied.start(queue: .main)
+    defer {
+      occupied.cancel()
+      ready.continuation.finish()
+    }
+    var events = ready.stream.makeAsyncIterator()
+    _ = await events.next()
+    let port = try #require(occupied.port)
+    fixture.host.port = String(port.rawValue)
+    fixture.host.start()
+    try await fixture.wait("Occupied Host port rejected") { fixture.host.error != nil }
+    #expect(!fixture.host.isRunning)
+    #expect(fixture.host.error == NWError.posix(.EADDRINUSE).localizedDescription)
+    try await fixture.startHost()
+    #expect(fixture.host.isRunning)
+    #expect(fixture.host.port != String(port.rawValue))
+  }
+
   @Test(.timeLimit(.minutes(1))) func viewportRebindsWhenSelectedMirrorChanges() async throws {
     let first = try Fixture()
     defer { first.close() }
@@ -43,8 +71,7 @@ struct MirrorTerminalIntegrationTests {
     let fixture = try Fixture()
     defer { fixture.close() }
     try await fixture.wait("Host program ready") { fixture.hostText.contains("READY") }
-    fixture.host.start()
-    try await fixture.wait("Host listener") { fixture.host.isRunning }
+    try await fixture.startHost()
     let client = try await fixture.connect()
     try await fixture.waitForMirror(client, containing: "READY")
     let oldView = try #require(client.replica.view)
@@ -64,8 +91,7 @@ struct MirrorTerminalIntegrationTests {
     let fixture = try Fixture()
     defer { fixture.close() }
     try await fixture.wait("Host program ready") { fixture.hostText.contains("READY") }
-    fixture.host.start()
-    try await fixture.wait("Host listener") { fixture.host.isRunning }
+    try await fixture.startHost()
     let stale = fixture.makeClient()
     stale.connect()
     try await fixture.wait("Free discovery") { !stale.panes.isEmpty }
@@ -85,8 +111,7 @@ struct MirrorTerminalIntegrationTests {
   @Test(.timeLimit(.minutes(1))) func retryUsesEnrollmentSavedBeforeAuthentication() async throws {
     let fixture = try Fixture()
     defer { fixture.close() }
-    fixture.host.start()
-    try await fixture.wait("Host listener") { fixture.host.isRunning }
+    try await fixture.startHost()
     fixture.host.addDevice()
     try await fixture.wait("Pairing listener") {
       fixture.host.isRunning && !fixture.host.isStarting
@@ -201,9 +226,7 @@ struct MirrorTerminalIntegrationTests {
     #expect(descriptor.projectName == fixture.directory.lastPathComponent)
     #expect(descriptor.subtitle == "Mirror integration · Mirror integration")
     #expect(!descriptor.title.contains(fixture.hostView.id.uuidString.prefix(8)))
-    fixture.host.start()
-    try await fixture.wait("Host listener") { fixture.host.isRunning || fixture.host.error != nil }
-    #expect(fixture.host.error == nil)
+    try await fixture.startHost()
     let client = try await fixture.connect()
     try await fixture.waitForMirror(client, containing: "READY")
 
@@ -448,6 +471,22 @@ struct MirrorTerminalIntegrationTests {
       client.replica.view?.readScreenContentsForCLI() ?? ""
     }
 
+    func startHost() async throws {
+      for attempt in 1...3 {
+        host.start()
+        try await wait("Host listener") { host.isRunning || host.error != nil }
+        if host.isRunning { return }
+        guard attempt < 3, host.error == NWError.posix(.EADDRINUSE).localizedDescription else {
+          throw Failure(
+            reason:
+              "Host startup failed at \(host.address):\(host.port): \(host.error ?? "unknown")")
+        }
+        // Port probing releases its socket before Network.framework binds. Retry
+        // only that initial allocation race; reconnects must retain their port.
+        host.port = String(try MirrorTestPort.unusedPort())
+      }
+    }
+
     func attach(_ view: GhosttySurfaceView) {
       let window = NSWindow(
         contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
@@ -542,7 +581,10 @@ struct MirrorTerminalIntegrationTests {
       for await _ in ticks {
         if try condition() { return }
         if ContinuousClock.now >= deadline {
-          throw Failure(reason: "Timed out: \(label); " + String(reflecting: hostText.suffix(1600)))
+          throw Failure(
+            reason: "Timed out: \(label); Host=\(host.address):\(host.port), "
+              + "running=\(host.isRunning), starting=\(host.isStarting), error=\(host.error ?? "none"); "
+              + String(reflecting: hostText.suffix(1600)))
         }
       }
       throw CancellationError()
