@@ -118,12 +118,6 @@ private struct MirrorSettingsView: View {
   @State private var hostToRename: MirrorKnownHost?
   @State private var alias = ""
 
-  private struct ListenOption: Identifiable {
-    let address: String
-    let label: String
-    var id: String { address }
-  }
-
   private var listenOptions: [ListenOption] {
     var options = [ListenOption(address: MirrorHostAddresses.allIPv4, label: "All interfaces (0.0.0.0)")]
     for interface in interfaces where interface.isIPv4 && !interface.isLoopback {
@@ -188,19 +182,17 @@ private struct MirrorSettingsView: View {
         .foregroundStyle(.secondary)
       // Static text while running: a disabled, still-focused field keeps its selection highlight.
       let editable = !(host.isRunning || host.isStarting)
-      // Center rows: the menu picker reports no usable text baseline, so baseline alignment floats the label.
+      // Center rows: the pop-up button reports no usable text baseline, so baseline alignment floats the label.
       Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
         GridRow {
           Text("Listen on").gridColumnAlignment(.trailing)
           if editable {
-            Picker("Listen on", selection: $host.address) {
-              ForEach(listenOptions) { option in
-                Text(option.label).tag(option.address)
-              }
-            }
-            .labelsHidden()
-            .frame(maxWidth: .infinity)
-            .help("Which of this Mac’s addresses accept connections")
+            // SwiftUI's menu picker keeps its intrinsic width and grows after its first open;
+            // an AppKit pop-up button fills the row from the start.
+            ListenAddressPopUp(options: listenOptions, selection: $host.address)
+              .frame(maxWidth: .infinity)
+              .help("Which of this Mac’s addresses accept connections")
+              .accessibilityLabel("Listen on")
           } else {
             Text(listenOptions.first { $0.address == host.address }?.label ?? host.address)
           }
@@ -495,5 +487,52 @@ private struct MirrorPairingView: View {
     let done = NSPasteboard.general.setString(value, forType: .string)
     copied = done && value == host.pairingKey
     copyError = done ? nil : "Unable to copy to the clipboard."
+  }
+}
+
+private struct ListenOption: Identifiable {
+  let address: String
+  let label: String
+  var id: String { address }
+}
+
+/// AppKit pop-up button: fills the proposed width, which SwiftUI's menu picker does not.
+private struct ListenAddressPopUp: NSViewRepresentable {
+  let options: [ListenOption]
+  @Binding var selection: String
+
+  func makeNSView(context: Context) -> NSPopUpButton {
+    let button = NSPopUpButton(frame: .zero, pullsDown: false)
+    button.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    button.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    button.target = context.coordinator
+    button.action = #selector(Coordinator.changed(_:))
+    return button
+  }
+
+  func updateNSView(_ button: NSPopUpButton, context: Context) {
+    context.coordinator.parent = self
+    if button.itemTitles != options.map(\.label) {
+      button.removeAllItems()
+      for option in options {
+        button.addItem(withTitle: option.label)
+        button.lastItem?.representedObject = option.address
+      }
+    }
+    if let index = options.firstIndex(where: { $0.address == selection }) {
+      button.selectItem(at: index)
+    }
+  }
+
+  func makeCoordinator() -> Coordinator { Coordinator(parent: self) }
+
+  final class Coordinator: NSObject {
+    var parent: ListenAddressPopUp
+    init(parent: ListenAddressPopUp) { self.parent = parent }
+
+    @objc func changed(_ sender: NSPopUpButton) {
+      guard let address = sender.selectedItem?.representedObject as? String else { return }
+      parent.selection = address
+    }
   }
 }
