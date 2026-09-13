@@ -28,10 +28,14 @@ final class RemoteMirrorStore {
     return client
   }
 
-  func savedConnection() -> MirrorSavedConnection? {
-    do { return try MirrorSavedConnection.load() } catch {
+  func savedHosts() -> [MirrorSavedConnection] {
+    do {
+      let hosts = try MirrorSavedConnection.loadAll()
+      credentialError = nil
+      return hosts
+    } catch {
       credentialError = error.localizedDescription
-      return nil
+      return []
     }
   }
 

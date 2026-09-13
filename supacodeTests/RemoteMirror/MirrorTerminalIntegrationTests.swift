@@ -308,7 +308,15 @@ struct MirrorTerminalIntegrationTests {
     window.setContentSize(NSSize(width: 320, height: 240))
     viewport.layoutSubtreeIfNeeded()
     #expect(replica.frame.height > viewport.contentSize.height)
-    #expect(viewport.contentView.bounds.minY == 0)
+    #expect(viewport.magnification < 1)
+    #expect(viewport.contentView.bounds.width >= client.replica.displaySize.width - 1)
+    #expect(viewport.contentView.bounds.height >= client.replica.displaySize.height - 1)
+    #expect(try fixture.frame(replica) == original)
+    viewport.update(surface: replica, displaySize: client.replica.displaySize, fitsWindow: false)
+    viewport.layoutSubtreeIfNeeded()
+    #expect(viewport.magnification == 1)
+    let initialTop: CGFloat = 0
+    #expect(abs(viewport.contentView.bounds.minY - initialTop) < 1)
     // AppKit ignores synthetic wheel events for a hidden scroll view.
     window.orderFront(nil)
     defer { window.orderOut(nil) }
@@ -319,12 +327,23 @@ struct MirrorTerminalIntegrationTests {
     try #require(replica.frame.height > viewport.contentSize.height)
     let event = try #require(
       CGEvent(
-        scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: 80, wheel2: 0, wheel3: 0
+        scrollWheelEvent2Source: nil, units: .pixel, wheelCount: 2, wheel1: -80, wheel2: 0, wheel3: 0
       ))
     replica.scrollWheel(with: try #require(NSEvent(cgEvent: event)))
-    try await fixture.wait("mirror viewport scroll") { viewport.contentView.bounds.minY > 0 }
+    try await fixture.wait("mirror viewport scroll") { viewport.contentView.bounds.minY > initialTop + 1 }
     #expect(try fixture.frame(replica) == original)
     #expect(try fixture.source.snapshot(fixture.hostView.id) == original)
+    let manualOffset = viewport.contentView.bounds.origin
+    window.setContentSize(NSSize(width: 280, height: 200))
+    viewport.layoutSubtreeIfNeeded()
+    #expect(abs(viewport.contentView.bounds.minY - manualOffset.y) < 1)
+    viewport.update(surface: replica, displaySize: client.replica.displaySize, fitsWindow: true)
+    window.setContentSize(NSSize(width: 1600, height: 1200))
+    viewport.layoutSubtreeIfNeeded()
+    #expect(viewport.magnification == 1)
+    #expect(viewport.contentView.bounds.minY == 0)
+    #expect(viewport.documentView?.isFlipped == true)
+    viewport.update(surface: replica, displaySize: client.replica.displaySize, fitsWindow: false)
     viewport.contentView.scroll(to: .zero)
     window.setContentSize(NSSize(width: 280, height: 200))
     viewport.layoutSubtreeIfNeeded()

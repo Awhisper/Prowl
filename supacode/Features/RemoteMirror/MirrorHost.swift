@@ -10,7 +10,10 @@ final class MirrorHost {
   private(set) var isStarting = false
   private(set) var error: String?
   private(set) var pairingKey = ""
-  private(set) var subscriberCount = 0
+  private(set) var subscriberCount = 0 {
+    didSet { updateDeviceActivity() }
+  }
+  private var devicePaneIDs: [UUID: Set<UUID>] = [:]
   var address: String
   var port: String
   @ObservationIgnored var commandService: MirrorCommandService?
@@ -47,6 +50,25 @@ final class MirrorHost {
   @ObservationIgnored private let saveIdentity: (MirrorHostIdentity) throws -> Void
 
   func isOnline(_ device: UUID) -> Bool { onlineDeviceIDs.contains(device) }
+
+  func mirroredPanes(for deviceID: UUID) -> [MirrorPaneDescriptor] {
+    guard let ids = devicePaneIDs[deviceID], !ids.isEmpty else { return [] }
+    return source.panes().filter { ids.contains($0.id) }
+  }
+
+  private func updateDeviceActivity() {
+    var next: [UUID: Set<UUID>] = [:]
+    for (peerID, subscription) in subscriptions {
+      guard let deviceID = devicePeers[peerID] else { continue }
+      next[deviceID, default: []].insert(subscription.paneID)
+    }
+    if next != devicePaneIDs { devicePaneIDs = next }
+  }
+
+  func cancelPairing() {
+    guard pairingExpiresAt != nil else { return }
+    expirePairing()
+  }
 
   func addDevice() {
     guard isRunning, !isStarting else { return }

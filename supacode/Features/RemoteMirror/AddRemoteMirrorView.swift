@@ -4,7 +4,7 @@ import SwiftUI
 struct AddRemoteMirrorView: View {
   @Environment(RemoteMirrorStore.self) private var mirrors
   let dismiss: () -> Void
-  let back: () -> Void
+  var savedHost: MirrorSavedConnection?
   @State private var address = ""
   @State private var port = "7880"
   @State private var pairingKey = ""
@@ -15,7 +15,7 @@ struct AddRemoteMirrorView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
-      Text("Remote Mirror Pane").font(.title2.bold())
+      Text("Connect to Host").font(.title2.bold())
       if let error = mirrors.credentialError { Text(error).font(.caption).foregroundStyle(.red) }
       if let client, client.isConnected {
         Text("Select a Host pane").foregroundStyle(.secondary)
@@ -64,12 +64,8 @@ struct AddRemoteMirrorView: View {
         }
       }
       HStack {
-        Button("Back") {
-          client?.close()
-          back()
-        }
         Spacer()
-        Button("Cancel") { dismiss() }
+        Button("Cancel") { dismiss() }.keyboardShortcut(.cancelAction)
         if client?.isConnected != true {
           Button(client?.isConnecting == true ? "Connecting…" : "Connect") { connect() }
             .disabled(client?.isConnecting == true)
@@ -81,10 +77,10 @@ struct AddRemoteMirrorView: View {
     .onAppear {
       guard !restored else { return }
       restored = true
-      if let saved = mirrors.savedConnection() {
+      if let saved = savedHost {
         address = saved.address
         port = String(saved.port)
-        pairingKey = saved.pairingKey
+        connect()
       }
     }
     .onChange(of: client?.enrolledConfiguration) { _, enrolled in

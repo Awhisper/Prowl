@@ -40,6 +40,7 @@ struct MirrorDevicePairingTests {
     var firstMessages = first.messages.makeAsyncIterator()
     #expect(await firstMessages.next()?.kind == .subscribed)
     #expect(await firstMessages.next()?.text == "current")
+    #expect(host.mirroredPanes(for: firstCredential.deviceID).map(\.id) == [source.id])
     host.addDevice()
     try await listening(host)
     let second = Client(port: UInt16(host.port)!, code: host.pairingKey) {
@@ -56,6 +57,7 @@ struct MirrorDevicePairingTests {
     try await listening(host)
     #expect(vault.identity?.id == identity)
     #expect(host.pairingKey.isEmpty)
+    #expect(host.mirroredPanes(for: firstCredential.deviceID).isEmpty)
     let resumed = Client(port: UInt16(host.port)!, credential: firstCredential)
     defer { resumed.peer.close() }
     try await resumed.start(stage: "first device after Host restart")
@@ -113,6 +115,37 @@ struct MirrorDevicePairingTests {
     await clock.advance(by: .seconds(60))
     #expect(host.pairingKey.isEmpty)
     #expect(host.devices.isEmpty)
+  }
+
+  @Test(.timeLimit(.minutes(1))) func cancelPairingClosesWindowWithoutStoppingHost() async throws {
+    let vault = Vault()
+    let suite = "MirrorCancelPairingTests-\(UUID())"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let host = MirrorHost(
+      source: Source(), defaults: defaults, enabled: true,
+      loadIdentity: { vault.identity }, saveIdentity: { vault.identity = $0 })
+    host.address = "127.0.0.1"
+    host.port = String(try MirrorTestPort.unusedPort())
+    host.start()
+    defer { host.stop() }
+    try await listening(host)
+    host.addDevice()
+    try await listening(host)
+    #expect(!host.pairingKey.isEmpty)
+    host.cancelPairing()
+    try await listening(host)
+    #expect(host.isRunning)
+    #expect(host.pairingKey.isEmpty)
+    #expect(host.pairingExpiresAt == nil)
+  }
+
+  @Test func savedHostsExcludeUnpairedAndDeduplicateEndpoints() {
+    let credential = MirrorDeviceCredential(hostID: UUID(), deviceID: UUID(), key: Data(repeating: 1, count: 32))
+    let first = MirrorSavedConnection(address: "192.0.2.1", port: 7880, pairingKey: "", credential: credential)
+    let second = MirrorSavedConnection(address: "192.0.2.2", port: 7880, pairingKey: "", credential: credential)
+    let unpaired = MirrorSavedConnection(address: "192.0.2.3", port: 7880, pairingKey: "temporary")
+    #expect(MirrorSavedConnection.verifiedHosts(from: [second, first, first, unpaired]) == [first, second])
   }
 
   @Test func proofBindsNonceIdentityHostAndPurpose() throws {

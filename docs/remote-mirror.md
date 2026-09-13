@@ -9,24 +9,35 @@ it after the list was read; use the explicit **Take Over** action.
 ## Enable and pair
 
 Launch the Mac App with `PROWL_REMOTE_MIRROR=1`. The experiment is hidden and cannot
-start a listener otherwise. Open the network button, choose a listening address
-and port, and **Start Host**. `0.0.0.0` listens on all IPv4 interfaces; clients enter
+start a listener otherwise. Hover over the **Remote Mirror** network button to
+preview, or click to keep it open. Under **Host**, choose a listening address
+and port, then **Start Host**. The icon is gray when stopped, muted blue when
+listening, and muted green when at least one pane is mirrored. `0.0.0.0` listens on all IPv4 interfaces; clients enter
 the Mac's reachable address instead.
 
-**Add a Device** opens a 60-second pairing window. Copy or type the eight-character
-code into **Add to Prowl → Remote Mirror Pane** on Mac or iOS. Successful enrollment
+**Add a Device** opens a modal pairing sheet with a 60-second code and connection
+instructions. **Refresh Code** replaces the code; **Cancel** invalidates an unused
+code without stopping Host or revoking a device that already paired. On the other
+Mac, open **Remote Mirror → Client → Connect to Host** and enter the address, port,
+and code. On iOS, use the connection editor. Successful enrollment
 consumes the code. The client saves its device credential in Keychain, then opens a
 new authenticated connection. A pairing-only connection cannot list or operate
 panes. No extra long-lived code is required. A saved enrollment remains available
 for Retry if the first runtime connection fails.
 
-For a previously paired address, leave the code blank. Saved credentials survive
+On Mac, the **Client** section lists previously paired Host addresses. Click
+**Connect** beside one to authenticate and open the pane picker without entering
+the address or code again. Saved entries do not imply that the Host is online;
+connection failures appear in the connection sheet. For a manually entered,
+previously paired address, leave the code blank. Saved credentials survive
 Host stop/start and App restart. They do not discover a changed IP address. The iOS
 connection editor can retain a device credential while updating the Host address;
 the client checks the Host identity after connecting. A new Host or revoked device
 requires a fresh pairing window. Old experiment keys are not migrated.
 
-The Host panel lists paired devices, their online state, and **Revoke**.
+The Host section lists paired devices, their connection state, active mirror count,
+mirrored pane names, and **Revoke**. A device browsing panes can be connected with
+zero mirrors.
 Device labels use the Mac local host name or the iOS system device name; pairing
 does not resolve a DNS name to obtain this label.
 
@@ -46,7 +57,11 @@ mirror only unsubscribes. Quitting Prowl does not promise that its programs surv
 
 Select an already-created pane; a sidebar project that has never opened a terminal
 is not yet a pane. **Refresh Panes** refreshes this list. The Host terminal owns the
-grid. Mac clients scroll a smaller viewport rather than resize the Host PTY. iOS
+grid. Mac clients default to **Fit to Window**, shrinking the complete terminal to
+fit without changing the Host PTY. **Original Size** restores readable native-size
+glyphs with local scrolling. It starts at the top; subsequent window resizes preserve
+the manual scroll position within the available bounds. Large Host grids can make
+Fit to Window text small. iOS
 renders replacement text with local reflow. Cleared output is not an archive.
 
 Host samples subscribed panes every 200 ms and allows only one unacknowledged frame

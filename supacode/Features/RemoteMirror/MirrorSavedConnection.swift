@@ -7,6 +7,37 @@ nonisolated struct MirrorSavedConnection: Codable, Equatable {
   var pairingKey: String
   var credential: MirrorDeviceCredential?
 
+  var endpointID: String { address + ":" + String(port) }
+
+  static func verifiedHosts(from records: [Self]) -> [Self] {
+    var hosts: [String: Self] = [:]
+    for record in records where record.credential != nil {
+      hosts[record.endpointID] = record
+    }
+    return hosts.values.sorted { $0.endpointID < $1.endpointID }
+  }
+
+  static func loadAll() throws -> [Self] {
+    var request = query(account: "")
+    request.removeValue(forKey: kSecAttrAccount as String)
+    request[kSecReturnData as String] = true
+    request[kSecReturnAttributes as String] = true
+    request[kSecMatchLimit as String] = kSecMatchLimitAll
+    var result: CFTypeRef?
+    let status = SecItemCopyMatching(request as CFDictionary, &result)
+    if status == errSecItemNotFound { return [] }
+    guard status == errSecSuccess else { throw KeychainError(status: status) }
+    guard let items = result as? [[String: Any]] else { throw MirrorProtocolError.invalidMessage }
+    let records: [Self] = try items.compactMap { item in
+      guard let account = item[kSecAttrAccount as String] as? String,
+        account.hasPrefix("host:") || account == "last-verified-host",
+        let data = item[kSecValueData as String] as? Data
+      else { return nil }
+      return try JSONDecoder().decode(Self.self, from: data)
+    }
+    return verifiedHosts(from: records)
+  }
+
   private static func query(account: String) -> [String: Any] {
     [
       kSecClass as String: kSecClassGenericPassword,

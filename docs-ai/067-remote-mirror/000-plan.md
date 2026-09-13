@@ -64,3 +64,4 @@ capability needed here. Browser clients are outside this implementation.
 - Updated 2026-09-09: Dependencies, Debug compilation, lint, and App-hosted regression tests now pass; real mirror UI verification remains pending — see [001-action.md](001-action.md).
 - Updated 2026-09-09: Real terminal integration exposed grid, input encoding, and mode baseline defects; corrected the verification boundary — see [002-terminal-integration.md](002-terminal-integration.md).
 - Updated 2026-09-09: Recorded UI interaction contracts, user-led two-Mac feedback, and the narrowed Draft scope — see [003-ui-and-draft-scope.md](003-ui-and-draft-scope.md).
+- Updated 2026-09-13: Planned unified macOS Host/Client controls and viewport decisions — see [006-macos-ux.md](006-macos-ux.md).
