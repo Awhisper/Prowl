@@ -199,7 +199,7 @@ private struct MirrorSettingsView: View {
               }
             }
             .labelsHidden()
-            .fixedSize()
+            .frame(maxWidth: .infinity)
             .help("Which of this Mac’s addresses accept connections")
           } else {
             Text(listenOptions.first { $0.address == host.address }?.label ?? host.address)

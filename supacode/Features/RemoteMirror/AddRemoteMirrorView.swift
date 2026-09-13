@@ -77,7 +77,7 @@ struct AddRemoteMirrorView: View {
       Text("Enter the address shown on Host under Remote Mirror → Add a Device.")
         .foregroundStyle(.secondary)
       Form {
-        TextField("Address", text: $address, prompt: Text("IP address or host name"))
+        TextField("Address", text: $address, prompt: Text("IP address"))
           .accessibilityIdentifier("remote-mirror-address")
         TextField("Port", text: $port, prompt: Text("7880"))
       }
