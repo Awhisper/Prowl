@@ -48,6 +48,7 @@ struct RemoteMirrorSidebar: View {
 struct RemoteMirrorPaneView: View {
   @State private var toolbarPopovers = ToolbarPopoverCoordinator()
   @Environment(RemoteMirrorStore.self) private var mirrors
+  @State private var fitsWindow = true
   @Bindable var client: MirrorClient
 
   var body: some View {
@@ -75,6 +76,15 @@ struct RemoteMirrorPaneView: View {
           .help("Reconnect to this pane; Retry never takes control from another device")
           .accessibilityIdentifier("remote-mirror-retry")
         }
+        if !client.showsHistory {
+          Picker("Display Size", selection: $fitsWindow) {
+            Text("Fit to Window").tag(true)
+            Text("Original Size").tag(false)
+          }
+          .fixedSize()
+          .help("Fit the full terminal or scroll at original size; Host dimensions stay unchanged")
+          .accessibilityIdentifier("remote-mirror-display-size")
+        }
         if client.showsHistory {
           Button("Live Terminal") { client.showsHistory = false }
         } else {
@@ -93,7 +103,7 @@ struct RemoteMirrorPaneView: View {
       }
       ZStack {
         if let view = client.replica.view {
-          MirrorTerminalViewport(surface: view, displaySize: client.replica.displaySize)
+          MirrorTerminalViewport(surface: view, displaySize: client.replica.displaySize, fitsWindow: fitsWindow)
             .opacity(client.showsHistory ? 0 : 1)
             .allowsHitTesting(!client.showsHistory)
         } else {

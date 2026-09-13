@@ -82,7 +82,10 @@ final class MirrorRemoteConnection: MirrorTransport {
         self.onClose?(reason)
       }
       peer.start()
-    } catch { close(error.localizedDescription) }
+    } catch {
+      SupaLogger("RemoteMirror").warning("Host connection failed: \(error)")
+      close(error.localizedDescription)
+    }
   }
 
   func send(_ message: MirrorMessage, closeAfterSending: Bool = false) {
@@ -170,7 +173,10 @@ final class MirrorRemoteConnection: MirrorTransport {
       case .failure(let failure): close(failure.error)
       default: throw MirrorProtocolError.invalidMessage
       }
-    } catch { close(error.localizedDescription) }
+    } catch {
+      SupaLogger("RemoteMirror").warning("Host connection failed: \(error)")
+      close(error.localizedDescription)
+    }
   }
 
 }

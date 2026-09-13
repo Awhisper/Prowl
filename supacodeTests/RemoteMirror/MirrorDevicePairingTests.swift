@@ -2,6 +2,7 @@ import Clocks
 import Foundation
 import Network
 import Observation
+import Security
 import Testing
 
 @testable import supacode
@@ -40,6 +41,7 @@ struct MirrorDevicePairingTests {
     var firstMessages = first.messages.makeAsyncIterator()
     #expect(await firstMessages.next()?.kind == .subscribed)
     #expect(await firstMessages.next()?.text == "current")
+    #expect(host.mirroredPanes(for: firstCredential.deviceID).map(\.id) == [source.id])
     host.addDevice()
     try await listening(host)
     let second = Client(port: UInt16(host.port)!, code: host.pairingKey) {
@@ -56,6 +58,7 @@ struct MirrorDevicePairingTests {
     try await listening(host)
     #expect(vault.identity?.id == identity)
     #expect(host.pairingKey.isEmpty)
+    #expect(host.mirroredPanes(for: firstCredential.deviceID).isEmpty)
     let resumed = Client(port: UInt16(host.port)!, credential: firstCredential)
     defer { resumed.peer.close() }
     try await resumed.start(stage: "first device after Host restart")
@@ -113,6 +116,133 @@ struct MirrorDevicePairingTests {
     await clock.advance(by: .seconds(60))
     #expect(host.pairingKey.isEmpty)
     #expect(host.devices.isEmpty)
+  }
+
+  @Test(.timeLimit(.minutes(1))) func cancelPairingClosesWindowWithoutStoppingHost() async throws {
+    let vault = Vault()
+    let suite = "MirrorCancelPairingTests-\(UUID())"
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let host = MirrorHost(
+      source: Source(), defaults: defaults, enabled: true,
+      loadIdentity: { vault.identity }, saveIdentity: { vault.identity = $0 })
+    host.address = "127.0.0.1"
+    host.port = String(try MirrorTestPort.unusedPort())
+    host.start()
+    defer { host.stop() }
+    try await listening(host)
+    host.addDevice()
+    try await listening(host)
+    #expect(!host.pairingKey.isEmpty)
+    host.cancelPairing()
+    try await listening(host)
+    #expect(host.isRunning)
+    #expect(host.pairingKey.isEmpty)
+    #expect(host.pairingExpiresAt == nil)
+  }
+
+  @Test func savedHostCacheDoesNotReadUntilRequested() {
+    var reads = 0
+    let cache = MirrorSavedHostCache(load: {
+      reads += 1
+      return []
+    })
+    #expect(cache.entries.isEmpty)
+    #expect(reads == 0)
+    cache.loadIfNeeded()
+    cache.loadIfNeeded()
+    #expect(reads == 1)
+    let credential = MirrorDeviceCredential(hostID: UUID(), deviceID: UUID(), key: Data(repeating: 1, count: 32))
+    let saved = MirrorSavedConnection(address: "192.0.2.1", port: 7880, pairingKey: "", credential: credential)
+    cache.remember(saved)
+    #expect(cache.entries == [saved])
+    #expect(reads == 1)
+  }
+
+  @Test func savedHostCacheCanRetryFailedExplicitLoad() {
+    var reads = 0
+    let cache = MirrorSavedHostCache(load: {
+      reads += 1
+      if reads == 1 { throw MirrorCredentialVault.Failure(status: errSecInteractionNotAllowed, operation: .readHost) }
+      return []
+    })
+    cache.loadIfNeeded()
+    #expect(!cache.hasLoaded)
+    #expect(cache.notice != nil)
+    cache.loadIfNeeded()
+    #expect(cache.hasLoaded)
+    #expect(cache.notice == nil)
+    #expect(reads == 2)
+  }
+
+  @Test(.enabled(if: ProcessInfo.processInfo.environment["PROWL_RUN_KEYCHAIN_TESTS"] == "1"))
+  func savedHostsRoundTripThroughKeychain() throws {
+    let service = "com.onevcat.prowl.tests.mirror-\(UUID())"
+    let credential = MirrorDeviceCredential(hostID: UUID(), deviceID: UUID(), key: Data(repeating: 1, count: 32))
+    let first = MirrorSavedConnection(address: "192.0.2.1", port: 7880, pairingKey: "", credential: credential)
+    let second = MirrorSavedConnection(address: "192.0.2.2", port: 7880, pairingKey: "", credential: credential)
+    let accounts = ["host:" + first.endpointID, "host:" + second.endpointID, "last-verified-host"]
+    defer { for account in accounts { try? MirrorSavedConnection.remove(account: account, service: service) } }
+    try first.save(account: accounts[0], service: service)
+    try second.save(account: accounts[1], service: service)
+    try second.save(account: accounts[2], service: service)
+    #expect(try MirrorSavedConnection.loadAll(service: service) == [first, second])
+    let corruptQuery: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: service,
+      kSecAttrAccount as String: accounts[0],
+    ]
+    #expect(
+      SecItemUpdate(
+        corruptQuery as CFDictionary,
+        [kSecValueData as String: Data("invalid".utf8)] as CFDictionary
+      ) == errSecSuccess)
+    #expect(try MirrorSavedConnection.loadAll(service: service) == [second])
+    for account in accounts.prefix(2) { try MirrorSavedConnection.remove(account: account, service: service) }
+    #expect(try MirrorSavedConnection.loadAll(service: service).isEmpty)
+    try MirrorSavedConnection.remove(account: accounts[2], service: service)
+  }
+
+  @Test func savedHostQueriesReadOnlyEndpointAccountsOneAtATime() throws {
+    let credential = MirrorDeviceCredential(hostID: UUID(), deviceID: UUID(), key: Data(repeating: 1, count: 32))
+    let saved = MirrorSavedConnection(address: "192.0.2.1", port: 7880, pairingKey: "", credential: credential)
+    let bytes = try JSONEncoder().encode(saved)
+    var accountsRead: [String] = []
+    let result = try MirrorSavedConnection.loadAll { query, output in
+      let query = query as NSDictionary
+      if query[kSecMatchLimit] as? String == kSecMatchLimitAll as String {
+        #expect(query[kSecReturnData] == nil)
+        output?.pointee =
+          [
+            [kSecAttrAccount as String: "host:" + saved.endpointID],
+            [kSecAttrAccount as String: "last-verified-host"],
+          ] as CFArray
+      } else {
+        #expect(query[kSecMatchLimit] as? String == kSecMatchLimitOne as String)
+        #expect(query[kSecReturnData] as? Bool == true)
+        accountsRead.append(query[kSecAttrAccount] as? String ?? "")
+        output?.pointee = bytes as CFData
+      }
+      return errSecSuccess
+    }
+    #expect(result == [saved])
+    #expect(accountsRead == ["host:" + saved.endpointID])
+  }
+
+  @Test func keychainFailureKeepsStatusOutOfUserMessage() {
+    let error = MirrorCredentialVault.Failure(status: errSecParam, operation: .readHost)
+    #expect(error.status == errSecParam)
+    #expect(error.localizedDescription == "Could not read saved Host access. Try connecting again.")
+    let hostError = MirrorCredentialVault.Failure(status: errSecAuthFailed, operation: .saveIdentity)
+    #expect(hostError.localizedDescription == "Could not save this Mac’s Host identity. Try again.")
+  }
+
+  @Test func savedHostsExcludeUnpairedAndDeduplicateEndpoints() {
+    let credential = MirrorDeviceCredential(hostID: UUID(), deviceID: UUID(), key: Data(repeating: 1, count: 32))
+    let first = MirrorSavedConnection(address: "192.0.2.1", port: 7880, pairingKey: "", credential: credential)
+    let second = MirrorSavedConnection(address: "192.0.2.2", port: 7880, pairingKey: "", credential: credential)
+    let unpaired = MirrorSavedConnection(address: "192.0.2.3", port: 7880, pairingKey: "temporary")
+    #expect(MirrorSavedConnection.verifiedHosts(from: [second, first, first, unpaired]) == [first, second])
   }
 
   @Test func proofBindsNonceIdentityHostAndPurpose() throws {
