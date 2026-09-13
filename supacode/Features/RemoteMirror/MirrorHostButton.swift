@@ -192,7 +192,7 @@ private struct MirrorSettingsView: View {
               .help("Connect to this saved Host and select a pane")
           }
         }
-        if let error = mirrors.credentialError { Text(error).font(.caption).foregroundStyle(.red) }
+        if let notice = mirrors.savedHostsNotice { Text(notice).font(.caption).foregroundStyle(.secondary) }
         Button("Connect to Host…", action: connect)
           .help("Enter another device’s address and pair with its Prowl app")
       }

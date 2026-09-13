@@ -109,3 +109,23 @@ identifier; existing Debug sessions and their active mirror were not restarted.
 
 None for this slice. Cursor-follow, Client-driven Host resizing, changed-address
 recovery, and network discovery require separate decisions if requested later.
+
+## Saved-Host Keychain correction
+
+A user screenshot exposed OSStatus -50 when opening the Client section. The list
+query combined `kSecMatchLimitAll` with `kSecReturnData` for password items, which
+macOS does not support. The earlier tests covered deduplication but did not execute
+that query. The correction enumerates attributes first, then reads each account
+with `kSecMatchLimitOne`. Its regression test uses real temporary Keychain records
+under a unique service, never personal pairing records.
+
+Saved-Host discovery is optional. Its failure must not present a red OSStatus code
+or block manual connection. Show a neutral recovery hint and keep Connect to Host
+available. Credential operations that prevent connection or persistence still
+report failure in plain language; diagnostic status codes belong in SupaLogger.
+
+Correction verification: the real-Keychain regression first failed with
+`KeychainError(status: -50)`, then passed after the query change. All 16 selected
+credential and real-terminal tests passed, including damaged-entry and empty-list
+cases. `make check` passed with 158 script tests; `make build-app` passed with zero
+errors and warnings. The correction is included in PR #802.

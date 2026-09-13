@@ -8,7 +8,7 @@ final class RemoteMirrorStore {
   let host: MirrorHost
   private(set) var clients: [MirrorClient] = []
   var selectedID: UUID?
-  private(set) var credentialError: String?
+  private(set) var savedHostsNotice: String?
   @ObservationIgnored private let runtime: GhosttyRuntime
 
   init(manager: WorktreeTerminalManager, runtime: GhosttyRuntime) {
@@ -31,10 +31,11 @@ final class RemoteMirrorStore {
   func savedHosts() -> [MirrorSavedConnection] {
     do {
       let hosts = try MirrorSavedConnection.loadAll()
-      credentialError = nil
+      savedHostsNotice = nil
       return hosts
     } catch {
-      credentialError = error.localizedDescription
+      SupaLogger("RemoteMirror").warning("Saved Host discovery failed: \(error)")
+      savedHostsNotice = "Saved hosts are unavailable. Use Connect to Host to continue."
       return []
     }
   }

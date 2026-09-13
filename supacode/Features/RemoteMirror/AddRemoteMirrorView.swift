@@ -16,7 +16,6 @@ struct AddRemoteMirrorView: View {
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
       Text("Connect to Host").font(.title2.bold())
-      if let error = mirrors.credentialError { Text(error).font(.caption).foregroundStyle(.red) }
       if let client, client.isConnected {
         Text("Select a Host pane").foregroundStyle(.secondary)
         if client.panes.isEmpty { Text("No open panes on this Host.") }

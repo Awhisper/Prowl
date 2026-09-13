@@ -17,76 +17,74 @@ nonisolated struct MirrorSavedConnection: Codable, Equatable {
     return hosts.values.sorted { $0.endpointID < $1.endpointID }
   }
 
-  static func loadAll() throws -> [Self] {
-    var request = query(account: "")
+  static func loadAll(service: String? = nil) throws -> [Self] {
+    var request = query(account: "", service: service)
     request.removeValue(forKey: kSecAttrAccount as String)
-    request[kSecReturnData as String] = true
+    // macOS password queries cannot return data for all matches at once.
     request[kSecReturnAttributes as String] = true
     request[kSecMatchLimit as String] = kSecMatchLimitAll
     var result: CFTypeRef?
     let status = SecItemCopyMatching(request as CFDictionary, &result)
     if status == errSecItemNotFound { return [] }
-    guard status == errSecSuccess else { throw KeychainError(status: status) }
+    guard status == errSecSuccess else { throw MirrorCredentialVault.Failure(status: status) }
     guard let items = result as? [[String: Any]] else { throw MirrorProtocolError.invalidMessage }
-    let records: [Self] = try items.compactMap { item in
+    let records: [Self] = items.compactMap { item in
       guard let account = item[kSecAttrAccount as String] as? String,
-        account.hasPrefix("host:") || account == "last-verified-host",
-        let data = item[kSecValueData as String] as? Data
+        account.hasPrefix("host:") || account == "last-verified-host"
       else { return nil }
-      return try JSONDecoder().decode(Self.self, from: data)
+      do {
+        return try load(account: account, service: service)
+      } catch {
+        SupaLogger("RemoteMirror").warning("Skipped an unreadable saved Host: \(error)")
+        return nil
+      }
     }
     return verifiedHosts(from: records)
   }
 
-  private static func query(account: String) -> [String: Any] {
+  private static func query(account: String, service: String? = nil) -> [String: Any] {
     [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String:
-        "\(Bundle.main.bundleIdentifier ?? "com.onevcat.prowl").remote-mirror",
+        service ?? "\(Bundle.main.bundleIdentifier ?? "com.onevcat.prowl").remote-mirror",
       kSecAttrAccount as String: account,
     ]
   }
 
-  static func load(account: String = "last-verified-host") throws -> Self? {
-    var request = query(account: account)
+  static func load(account: String = "last-verified-host", service: String? = nil) throws -> Self? {
+    var request = query(account: account, service: service)
     request[kSecReturnData as String] = true
     request[kSecMatchLimit as String] = kSecMatchLimitOne
     var result: CFTypeRef?
     let status = SecItemCopyMatching(request as CFDictionary, &result)
     if status == errSecItemNotFound { return nil }
-    guard status == errSecSuccess else { throw KeychainError(status: status) }
+    guard status == errSecSuccess else { throw MirrorCredentialVault.Failure(status: status) }
     guard let data = result as? Data else { throw MirrorProtocolError.invalidMessage }
     let saved = try JSONDecoder().decode(Self.self, from: data)
     return saved.credential == nil ? nil : saved
   }
 
-  func save(account: String = "last-verified-host") throws {
+  func save(account: String = "last-verified-host", service: String? = nil) throws {
     guard credential != nil else { return }
     var saved = self
     saved.pairingKey = ""
     let data = try JSONEncoder().encode(saved)
     let update = [kSecValueData as String: data]
-    var status = SecItemUpdate(Self.query(account: account) as CFDictionary, update as CFDictionary)
+    var status = SecItemUpdate(Self.query(account: account, service: service) as CFDictionary, update as CFDictionary)
     if status == errSecItemNotFound {
-      var item = Self.query(account: account)
+      var item = Self.query(account: account, service: service)
       item[kSecValueData as String] = data
       item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
       status = SecItemAdd(item as CFDictionary, nil)
     }
-    guard status == errSecSuccess else { throw KeychainError(status: status) }
+    guard status == errSecSuccess else { throw MirrorCredentialVault.Failure(status: status) }
   }
 
-  static func remove(account: String = "last-verified-host") throws {
-    let status = SecItemDelete(query(account: account) as CFDictionary)
+  static func remove(account: String = "last-verified-host", service: String? = nil) throws {
+    let status = SecItemDelete(query(account: account, service: service) as CFDictionary)
     guard status == errSecSuccess || status == errSecItemNotFound else {
-      throw KeychainError(status: status)
+      throw MirrorCredentialVault.Failure(status: status)
     }
   }
 
-  private struct KeychainError: LocalizedError {
-    let status: OSStatus
-    var errorDescription: String? {
-      "Unable to access saved Host credentials (Keychain \(status))."
-    }
-  }
 }

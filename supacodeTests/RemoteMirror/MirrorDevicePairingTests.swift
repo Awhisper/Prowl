@@ -2,6 +2,7 @@ import Clocks
 import Foundation
 import Network
 import Observation
+import Security
 import Testing
 
 @testable import supacode
@@ -138,6 +139,38 @@ struct MirrorDevicePairingTests {
     #expect(host.isRunning)
     #expect(host.pairingKey.isEmpty)
     #expect(host.pairingExpiresAt == nil)
+  }
+
+  @Test func savedHostsRoundTripThroughKeychain() throws {
+    let service = "com.onevcat.prowl.tests.mirror-\(UUID())"
+    let credential = MirrorDeviceCredential(hostID: UUID(), deviceID: UUID(), key: Data(repeating: 1, count: 32))
+    let first = MirrorSavedConnection(address: "192.0.2.1", port: 7880, pairingKey: "", credential: credential)
+    let second = MirrorSavedConnection(address: "192.0.2.2", port: 7880, pairingKey: "", credential: credential)
+    let accounts = ["host:" + first.endpointID, "host:" + second.endpointID, "last-verified-host"]
+    defer { for account in accounts { try? MirrorSavedConnection.remove(account: account, service: service) } }
+    try first.save(account: accounts[0], service: service)
+    try second.save(account: accounts[1], service: service)
+    try second.save(account: accounts[2], service: service)
+    #expect(try MirrorSavedConnection.loadAll(service: service) == [first, second])
+    let corruptQuery: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: service,
+      kSecAttrAccount as String: accounts[0],
+    ]
+    #expect(
+      SecItemUpdate(
+        corruptQuery as CFDictionary,
+        [kSecValueData as String: Data("invalid".utf8)] as CFDictionary
+      ) == errSecSuccess)
+    #expect(try MirrorSavedConnection.loadAll(service: service) == [second])
+    for account in accounts { try MirrorSavedConnection.remove(account: account, service: service) }
+    #expect(try MirrorSavedConnection.loadAll(service: service).isEmpty)
+  }
+
+  @Test func keychainFailureKeepsStatusOutOfUserMessage() {
+    let error = MirrorCredentialVault.Failure(status: errSecParam)
+    #expect(error.status == errSecParam)
+    #expect(error.localizedDescription == "Pairing information is unavailable. Try again.")
   }
 
   @Test func savedHostsExcludeUnpairedAndDeduplicateEndpoints() {

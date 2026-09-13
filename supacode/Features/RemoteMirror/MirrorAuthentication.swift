@@ -79,6 +79,11 @@ nonisolated enum MirrorCredentialVault {
   }
   struct Failure: LocalizedError {
     let status: OSStatus
-    var errorDescription: String? { "Unable to store device credentials (Keychain \(status))." }
+    init(status: OSStatus) {
+      self.status = status
+      SupaLogger("RemoteMirror").warning("Keychain operation failed (OSStatus \(status)).")
+    }
+
+    var errorDescription: String? { "Pairing information is unavailable. Try again." }
   }
 }

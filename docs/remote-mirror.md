@@ -44,8 +44,10 @@ does not resolve a DNS name to obtain this label.
 Revocation removes the persisted secret and disconnects all connections for that device;
 other devices remain connected. Device records are limited to 64. If enrollment
 succeeds on Host but its response or the client's save is lost, open a new window
-and remove the unused device record. Keychain failures are reported, not replaced
-with plaintext storage.
+and remove the unused device record. Unreadable saved entries are omitted from the Host list without deleting them.
+If the list cannot load, a neutral hint keeps **Connect to Host** available. Errors
+that prevent pairing or connection remain visible in plain language; Keychain
+status codes are logged for diagnosis. Credentials are never stored as plaintext.
 
 The pairing window changes the listener's TLS keys. Prowl waits for the old
 listener's cancellation before rebinding its port; established connections survive.
