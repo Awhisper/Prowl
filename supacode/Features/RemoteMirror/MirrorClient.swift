@@ -69,39 +69,34 @@ final class MirrorClient: Identifiable {
     subscriptionID = nil
     isSubscribed = false
     isConnecting = true
-    do {
-      let peer = makeConnection(configuration)
-      self.peer = peer
-      peer.onEnrolled = { [weak self, weak peer] enrolled in
-        guard let self, let peer, self.peer === peer else { return }
-        self.configuration = enrolled
-        self.enrolledConfiguration = enrolled
-      }
-      peer.onReady = { [weak self, weak peer] in
-        guard let self, let peer, self.peer === peer else { return }
-        if let verified = peer.verifiedConfiguration { self.configuration = verified }
-        self.isConnected = true
-        peer.send(.list)
-      }
-      peer.onMessage = { [weak self, weak peer] message in
-        guard let self, let peer, self.peer === peer else { return }
-        self.receive(message)
-      }
-      peer.onClose = { [weak self, weak peer] reason in
-        guard let self, let peer, self.peer === peer else { return }
-        self.peer = nil
-        self.isConnected = false
-        self.isConnecting = false
-        self.isLoadingHistory = false
-        self.isSubscribed = false
-        self.subscriptionID = nil
-        self.error = self.error ?? reason ?? "Connection lost. Remote status is unknown."
-      }
-      peer.start()
-    } catch {
-      isConnecting = false
-      self.error = error.localizedDescription
+    let peer = makeConnection(configuration)
+    self.peer = peer
+    peer.onEnrolled = { [weak self, weak peer] enrolled in
+      guard let self, let peer, self.peer === peer else { return }
+      self.configuration = enrolled
+      self.enrolledConfiguration = enrolled
     }
+    peer.onReady = { [weak self, weak peer] in
+      guard let self, let peer, self.peer === peer else { return }
+      if let verified = peer.verifiedConfiguration { self.configuration = verified }
+      self.isConnected = true
+      peer.send(.list)
+    }
+    peer.onMessage = { [weak self, weak peer] message in
+      guard let self, let peer, self.peer === peer else { return }
+      self.receive(message)
+    }
+    peer.onClose = { [weak self, weak peer] reason in
+      guard let self, let peer, self.peer === peer else { return }
+      self.peer = nil
+      self.isConnected = false
+      self.isConnecting = false
+      self.isLoadingHistory = false
+      self.isSubscribed = false
+      self.subscriptionID = nil
+      self.error = self.error ?? reason ?? "Connection lost. Remote status is unknown."
+    }
+    peer.start()
   }
 
   func refreshPanes() { peer?.send(.list) }
