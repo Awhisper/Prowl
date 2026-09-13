@@ -188,7 +188,8 @@ private struct MirrorSettingsView: View {
         .foregroundStyle(.secondary)
       // Static text while running: a disabled, still-focused field keeps its selection highlight.
       let editable = !(host.isRunning || host.isStarting)
-      Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 10) {
+      // Center rows: the menu picker reports no usable text baseline, so baseline alignment floats the label.
+      Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
         GridRow {
           Text("Listen on").gridColumnAlignment(.trailing)
           if editable {
