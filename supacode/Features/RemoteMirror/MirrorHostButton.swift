@@ -28,6 +28,7 @@ struct MirrorHostButton: View {
       let isPresented = popovers.presented == .mirror
       Button {
         popovers.toggle(.mirror)
+        if popovers.presented == .mirror { mirrors.savedHosts.loadIfNeeded() }
       } label: {
         Image(systemName: "network").foregroundStyle(tint)
       }
@@ -111,7 +112,6 @@ private struct MirrorSettingsView: View {
   let pair: () -> Void
   let connect: () -> Void
   let reconnect: (MirrorSavedConnection) -> Void
-  @State private var savedHosts: [MirrorSavedConnection] = []
 
   var body: some View {
     VStack(alignment: .leading, spacing: 16) {
@@ -181,7 +181,7 @@ private struct MirrorSettingsView: View {
         Text("Client").font(.headline)
         Text("Connect to Prowl on another device and mirror one of its terminal panes.")
           .foregroundStyle(.secondary)
-        ForEach(savedHosts, id: \.endpointID) { saved in
+        ForEach(mirrors.savedHosts.entries, id: \.endpointID) { saved in
           HStack {
             VStack(alignment: .leading, spacing: 4) {
               Text(saved.endpointID).lineLimit(1)
@@ -192,7 +192,14 @@ private struct MirrorSettingsView: View {
               .help("Connect to this saved Host and select a pane")
           }
         }
-        if let notice = mirrors.savedHostsNotice { Text(notice).font(.caption).foregroundStyle(.secondary) }
+        if let notice = mirrors.savedHosts.notice { Text(notice).font(.caption).foregroundStyle(.secondary) }
+        if !mirrors.savedHosts.hasLoaded {
+          Button("Load Saved Hosts") {
+            interact()
+            mirrors.savedHosts.loadIfNeeded()
+          }
+          .help("Read previously paired Hosts from secure storage")
+        }
         Button("Connect to Host…", action: connect)
           .help("Enter another device’s address and pair with its Prowl app")
       }
@@ -200,7 +207,6 @@ private struct MirrorSettingsView: View {
     .padding(24)
     .frame(width: 460)
     .accessibilityIdentifier("remote-mirror-host-panel")
-    .onAppear { savedHosts = mirrors.savedHosts() }
     .onChange(of: host.address) { _, _ in interact() }
     .onChange(of: host.port) { _, _ in interact() }
   }
@@ -209,6 +215,7 @@ private struct MirrorSettingsView: View {
 private struct MirrorPairingView: View {
   @Bindable var host: MirrorHost
   let dismiss: () -> Void
+  @State private var hasRequestedCode = false
   @State private var copied = false
   @State private var copyError: String?
 
@@ -233,6 +240,10 @@ private struct MirrorPairingView: View {
         }
         .help("Copy the single-use pairing code")
         .accessibilityIdentifier("remote-mirror-copy-key")
+      } else if !host.isRunning && !host.isStarting {
+        Text("Host is off. Start Host before pairing a device.").foregroundStyle(.secondary)
+      } else if !hasRequestedCode || host.isStarting {
+        ProgressView("Preparing pairing…")
       } else {
         Text("The code was used or expired. Refresh to pair another device.")
           .foregroundStyle(.secondary)
@@ -252,7 +263,11 @@ private struct MirrorPairingView: View {
       }
     }
     .padding(24).frame(width: 440)
-    .onAppear { host.addDevice() }
+    .onChange(of: host.isStarting, initial: true) { _, starting in
+      guard !hasRequestedCode, !starting, host.isRunning else { return }
+      hasRequestedCode = true
+      host.addDevice()
+    }
     .onChange(of: host.pairingKey) { _, _ in
       copied = false
       copyError = nil

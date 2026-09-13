@@ -11,6 +11,7 @@ final class MirrorHost {
   private(set) var error: String?
   private(set) var pairingKey = ""
   private(set) var subscriberCount = 0 {
+    // Subscription membership changes publish count, including takeovers with an unchanged count.
     didSet { updateDeviceActivity() }
   }
   private var devicePaneIDs: [UUID: Set<UUID>] = [:]
@@ -82,7 +83,10 @@ final class MirrorHost {
         self?.expirePairing()
       }
       try rebuildListener()
-    } catch { self.error = error.localizedDescription }
+    } catch {
+      SupaLogger("RemoteMirror").warning("Host device operation failed: \(error)")
+      self.error = error.localizedDescription
+    }
   }
 
   private func expirePairing() {
@@ -90,7 +94,10 @@ final class MirrorHost {
     pairingExpiresAt = nil
     pairingTask?.cancel()
     pairingTask = nil
-    do { if isRunning { try rebuildListener() } } catch { self.error = error.localizedDescription }
+    do { if isRunning { try rebuildListener() } } catch {
+      SupaLogger("RemoteMirror").warning("Host device operation failed: \(error)")
+      self.error = error.localizedDescription
+    }
   }
 
   func revoke(_ deviceID: UUID) {
@@ -107,7 +114,10 @@ final class MirrorHost {
         peers[peerID]?.close("Device access was revoked.")
       }
       try rebuildListener()
-    } catch { self.error = error.localizedDescription }
+    } catch {
+      SupaLogger("RemoteMirror").warning("Host device operation failed: \(error)")
+      self.error = error.localizedDescription
+    }
   }
 
   private struct Subscription {
@@ -155,6 +165,7 @@ final class MirrorHost {
       isStarting = true
       try rebuildListener()
     } catch {
+      SupaLogger("RemoteMirror").warning("Host start failed: \(error)")
       self.error = "Cannot start Host: \(error.localizedDescription)"
       isStarting = false
     }

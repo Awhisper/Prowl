@@ -129,3 +129,29 @@ Correction verification: the real-Keychain regression first failed with
 credential and real-terminal tests passed, including damaged-entry and empty-list
 cases. `make check` passed with 158 script tests; `make build-app` passed with zero
 errors and warnings. The correction is included in PR #802.
+
+## Review follow-up
+
+Accept review items 1, 4, and 5: load saved credentials only after an explicit
+click, cache the result in memory, update that cache after enrollment, keep errors
+free of logging side effects, and enumerate only endpoint accounts accepted by the
+reconnect path. An explicit retry remains available if discovery failed. The real
+login-Keychain test becomes opt-in; deterministic query tests remain in the default
+suite. Add a comment for subscription-count publication and let the pairing sheet
+wait for listener readiness before its first code request.
+
+Do not change the viewport decision: Fit to Window is the accepted default and
+shows the whole grid. Original Size remains top-origin to address the reported
+short-output blank viewport. A cursor-follow policy needs separate evidence and
+rules. The user will verify item 2 (native popover resize behavior); no new native
+acceptance claim is made here.
+
+Review verification: 18 default credential/terminal regressions passed. The
+opt-in real-Keychain test also passed when run separately with
+`TEST_RUNNER_PROWL_RUN_KEYCHAIN_TESTS=1` and
+`-only-testing:supacodeTests/MirrorDevicePairingTests/savedHostsRoundTripThroughKeychain()`.
+Default query tests enforce attribute-only enumeration, one-at-a-time data reads,
+and exclusion of `last-verified-host`. Cache tests cover lazy reads, enrollment
+updates, and retry after an explicit lookup failure. `make check` passed with
+158 script tests. Native popover sizing acceptance remains with the user.
+The final Debug build passed with zero errors and warnings.

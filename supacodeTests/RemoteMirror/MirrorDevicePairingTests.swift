@@ -141,7 +141,42 @@ struct MirrorDevicePairingTests {
     #expect(host.pairingExpiresAt == nil)
   }
 
-  @Test func savedHostsRoundTripThroughKeychain() throws {
+  @Test func savedHostCacheDoesNotReadUntilRequested() {
+    var reads = 0
+    let cache = MirrorSavedHostCache(load: {
+      reads += 1
+      return []
+    })
+    #expect(cache.entries.isEmpty)
+    #expect(reads == 0)
+    cache.loadIfNeeded()
+    cache.loadIfNeeded()
+    #expect(reads == 1)
+    let credential = MirrorDeviceCredential(hostID: UUID(), deviceID: UUID(), key: Data(repeating: 1, count: 32))
+    let saved = MirrorSavedConnection(address: "192.0.2.1", port: 7880, pairingKey: "", credential: credential)
+    cache.remember(saved)
+    #expect(cache.entries == [saved])
+    #expect(reads == 1)
+  }
+
+  @Test func savedHostCacheCanRetryFailedExplicitLoad() {
+    var reads = 0
+    let cache = MirrorSavedHostCache(load: {
+      reads += 1
+      if reads == 1 { throw MirrorCredentialVault.Failure(status: errSecInteractionNotAllowed, operation: .readHost) }
+      return []
+    })
+    cache.loadIfNeeded()
+    #expect(!cache.hasLoaded)
+    #expect(cache.notice != nil)
+    cache.loadIfNeeded()
+    #expect(cache.hasLoaded)
+    #expect(cache.notice == nil)
+    #expect(reads == 2)
+  }
+
+  @Test(.enabled(if: ProcessInfo.processInfo.environment["PROWL_RUN_KEYCHAIN_TESTS"] == "1"))
+  func savedHostsRoundTripThroughKeychain() throws {
     let service = "com.onevcat.prowl.tests.mirror-\(UUID())"
     let credential = MirrorDeviceCredential(hostID: UUID(), deviceID: UUID(), key: Data(repeating: 1, count: 32))
     let first = MirrorSavedConnection(address: "192.0.2.1", port: 7880, pairingKey: "", credential: credential)
@@ -163,14 +198,43 @@ struct MirrorDevicePairingTests {
         [kSecValueData as String: Data("invalid".utf8)] as CFDictionary
       ) == errSecSuccess)
     #expect(try MirrorSavedConnection.loadAll(service: service) == [second])
-    for account in accounts { try MirrorSavedConnection.remove(account: account, service: service) }
+    for account in accounts.prefix(2) { try MirrorSavedConnection.remove(account: account, service: service) }
     #expect(try MirrorSavedConnection.loadAll(service: service).isEmpty)
+    try MirrorSavedConnection.remove(account: accounts[2], service: service)
+  }
+
+  @Test func savedHostQueriesReadOnlyEndpointAccountsOneAtATime() throws {
+    let credential = MirrorDeviceCredential(hostID: UUID(), deviceID: UUID(), key: Data(repeating: 1, count: 32))
+    let saved = MirrorSavedConnection(address: "192.0.2.1", port: 7880, pairingKey: "", credential: credential)
+    let bytes = try JSONEncoder().encode(saved)
+    var accountsRead: [String] = []
+    let result = try MirrorSavedConnection.loadAll { query, output in
+      let query = query as NSDictionary
+      if query[kSecMatchLimit] as? String == kSecMatchLimitAll as String {
+        #expect(query[kSecReturnData] == nil)
+        output?.pointee =
+          [
+            [kSecAttrAccount as String: "host:" + saved.endpointID],
+            [kSecAttrAccount as String: "last-verified-host"],
+          ] as CFArray
+      } else {
+        #expect(query[kSecMatchLimit] as? String == kSecMatchLimitOne as String)
+        #expect(query[kSecReturnData] as? Bool == true)
+        accountsRead.append(query[kSecAttrAccount] as? String ?? "")
+        output?.pointee = bytes as CFData
+      }
+      return errSecSuccess
+    }
+    #expect(result == [saved])
+    #expect(accountsRead == ["host:" + saved.endpointID])
   }
 
   @Test func keychainFailureKeepsStatusOutOfUserMessage() {
-    let error = MirrorCredentialVault.Failure(status: errSecParam)
+    let error = MirrorCredentialVault.Failure(status: errSecParam, operation: .readHost)
     #expect(error.status == errSecParam)
-    #expect(error.localizedDescription == "Pairing information is unavailable. Try again.")
+    #expect(error.localizedDescription == "Could not read saved Host access. Try connecting again.")
+    let hostError = MirrorCredentialVault.Failure(status: errSecAuthFailed, operation: .saveIdentity)
+    #expect(hostError.localizedDescription == "Could not save this Mac’s Host identity. Try again.")
   }
 
   @Test func savedHostsExcludeUnpairedAndDeduplicateEndpoints() {

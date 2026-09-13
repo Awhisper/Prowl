@@ -16,7 +16,8 @@ listening, and muted green when at least one pane is mirrored. `0.0.0.0` listens
 the Mac's reachable address instead.
 
 **Add a Device** opens a modal pairing sheet with a 60-second code and connection
-instructions. **Refresh Code** replaces the code; **Cancel** invalidates an unused
+instructions. If the listener is restarting, the sheet waits before generating
+its first code. **Refresh Code** replaces the code; **Cancel** invalidates an unused
 code without stopping Host or revoking a device that already paired. On the other
 Mac, open **Remote Mirror → Client → Connect to Host** and enter the address, port,
 and code. On iOS, use the connection editor. Successful enrollment
@@ -25,7 +26,9 @@ new authenticated connection. A pairing-only connection cannot list or operate
 panes. No extra long-lived code is required. A saved enrollment remains available
 for Retry if the first runtime connection fails.
 
-On Mac, the **Client** section lists previously paired Host addresses. Click
+On Mac, click **Remote Mirror** or **Load Saved Hosts** to read previously paired
+Host addresses. Hover previews use the in-memory list and never read Keychain.
+The list is cached for the app session and updated after new enrollment. Click
 **Connect** beside one to authenticate and open the pane picker without entering
 the address or code again. Saved entries do not imply that the Host is online;
 connection failures appear in the connection sheet. For a manually entered,
@@ -45,7 +48,8 @@ Revocation removes the persisted secret and disconnects all connections for that
 other devices remain connected. Device records are limited to 64. If enrollment
 succeeds on Host but its response or the client's save is lost, open a new window
 and remove the unused device record. Unreadable saved entries are omitted from the Host list without deleting them.
-If the list cannot load, a neutral hint keeps **Connect to Host** available. Errors
+If the list cannot load, a neutral hint keeps **Connect to Host** available; **Load Saved Hosts** retries
+the failed lookup. Errors
 that prevent pairing or connection remain visible in plain language; Keychain
 status codes are logged for diagnosis. Credentials are never stored as plaintext.
 

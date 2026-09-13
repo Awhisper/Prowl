@@ -61,7 +61,7 @@ nonisolated enum MirrorCredentialVault {
     var result: CFTypeRef?
     let status = SecItemCopyMatching(query as CFDictionary, &result)
     if status == errSecItemNotFound { return nil }
-    guard status == errSecSuccess else { throw Failure(status: status) }
+    guard status == errSecSuccess else { throw Failure(status: status, operation: .readIdentity) }
     guard let data = result as? Data else { throw MirrorProtocolError.invalidMessage }
     return try JSONDecoder().decode(type, from: data)
   }
@@ -75,15 +75,22 @@ nonisolated enum MirrorCredentialVault {
       item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
       status = SecItemAdd(item as CFDictionary, nil)
     }
-    guard status == errSecSuccess else { throw Failure(status: status) }
+    guard status == errSecSuccess else { throw Failure(status: status, operation: .saveIdentity) }
   }
+  enum Operation { case readIdentity, saveIdentity, readHost, saveHost, removeHost }
+
   struct Failure: LocalizedError {
     let status: OSStatus
-    init(status: OSStatus) {
-      self.status = status
-      SupaLogger("RemoteMirror").warning("Keychain operation failed (OSStatus \(status)).")
-    }
+    let operation: Operation
 
-    var errorDescription: String? { "Pairing information is unavailable. Try again." }
+    var errorDescription: String? {
+      switch operation {
+      case .readIdentity: "Could not read this Mac’s Host identity. Try again."
+      case .saveIdentity: "Could not save this Mac’s Host identity. Try again."
+      case .readHost: "Could not read saved Host access. Try connecting again."
+      case .saveHost: "Could not save access to this Host. Try connecting again."
+      case .removeHost: "Could not remove saved Host access. Try again."
+      }
+    }
   }
 }
