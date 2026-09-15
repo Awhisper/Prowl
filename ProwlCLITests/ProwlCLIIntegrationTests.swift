@@ -2045,7 +2045,8 @@ final class ProwlCLIIntegrationTests: XCTestCase {
                 handle: 8,
                 title: "zsh",
                 cwd: "/Users/onevcat/Projects/Prowl",
-                focused: true
+                focused: true,
+                visible: true
               ),
               task: ListTask(status: "running")
             )
@@ -2189,7 +2190,7 @@ final class ProwlCLIIntegrationTests: XCTestCase {
                 path: "/Projects/Alpha", rootPath: "/Projects/Alpha", kind: "git"
               ),
               tab: ListTab(id: "t1", title: "Tab A", selected: true),
-              pane: ListPane(id: "p1", title: "zsh", cwd: "/Projects/Alpha", focused: true),
+              pane: ListPane(id: "p1", title: "zsh", cwd: "/Projects/Alpha", focused: true, visible: true),
               task: ListTask(status: "running")
             ),
             ListResponseItem(
@@ -2198,7 +2199,7 @@ final class ProwlCLIIntegrationTests: XCTestCase {
                 path: "/Projects/Beta", rootPath: "/Projects/Beta", kind: "git"
               ),
               tab: ListTab(id: "t2", title: "Tab B", selected: true),
-              pane: ListPane(id: "p2", title: "zsh", cwd: "/Projects/Beta", focused: false),
+              pane: ListPane(id: "p2", title: "zsh", cwd: "/Projects/Beta", focused: false, visible: true),
               task: ListTask(status: "idle")
             ),
           ]
@@ -2237,7 +2238,7 @@ final class ProwlCLIIntegrationTests: XCTestCase {
                 path: "/Projects/App", rootPath: "/Projects/App", kind: "git"
               ),
               tab: ListTab(id: "t1", title: "Tab 1", selected: true),
-              pane: ListPane(id: "p-same", title: "zsh", cwd: "/Projects/App", focused: true),
+              pane: ListPane(id: "p-same", title: "zsh", cwd: "/Projects/App", focused: true, visible: true),
               task: ListTask(status: "idle")
             ),
             ListResponseItem(
@@ -2246,7 +2247,7 @@ final class ProwlCLIIntegrationTests: XCTestCase {
                 path: "/Projects/App", rootPath: "/Projects/App", kind: "git"
               ),
               tab: ListTab(id: "t1", title: "Tab 1", selected: true),
-              pane: ListPane(id: "p-diff", title: "zsh", cwd: "/Users/onevcat", focused: false),
+              pane: ListPane(id: "p-diff", title: "zsh", cwd: "/Users/onevcat", focused: false, visible: true),
               task: ListTask(status: "idle")
             ),
           ]
@@ -2289,7 +2290,7 @@ final class ProwlCLIIntegrationTests: XCTestCase {
                 path: "/Projects/App", rootPath: "/Projects/App", kind: "git"
               ),
               tab: ListTab(id: "tab-a", title: "Tab A", selected: false),
-              pane: ListPane(id: "pa1", title: "zsh", cwd: "/Projects/App", focused: false),
+              pane: ListPane(id: "pa1", title: "zsh", cwd: "/Projects/App", focused: false, visible: false),
               task: ListTask(status: "idle")
             ),
             ListResponseItem(
@@ -2298,7 +2299,7 @@ final class ProwlCLIIntegrationTests: XCTestCase {
                 path: "/Projects/App", rootPath: "/Projects/App", kind: "git"
               ),
               tab: ListTab(id: "tab-b", title: "Tab B", selected: true),
-              pane: ListPane(id: "pb1", title: "vim", cwd: "/Projects/App", focused: true),
+              pane: ListPane(id: "pb1", title: "vim", cwd: "/Projects/App", focused: true, visible: true),
               task: ListTask(status: "idle")
             ),
             ListResponseItem(
@@ -2307,7 +2308,7 @@ final class ProwlCLIIntegrationTests: XCTestCase {
                 path: "/Projects/App", rootPath: "/Projects/App", kind: "git"
               ),
               tab: ListTab(id: "tab-b", title: "Tab B", selected: true),
-              pane: ListPane(id: "pb2", title: "htop", cwd: "/Projects/App", focused: false),
+              pane: ListPane(id: "pb2", title: "htop", cwd: "/Projects/App", focused: false, visible: true),
               task: ListTask(status: "idle")
             ),
           ]
@@ -2343,7 +2344,7 @@ final class ProwlCLIIntegrationTests: XCTestCase {
                 path: "/Projects/App", rootPath: "/Projects/App", kind: "git"
               ),
               tab: ListTab(id: "t1", title: "Tab A", selected: true),
-              pane: ListPane(id: "p1", title: "zsh", cwd: "/Projects/App", focused: true),
+              pane: ListPane(id: "p1", title: "zsh", cwd: "/Projects/App", focused: true, visible: true),
               task: ListTask(status: "running")
             )
           ]
@@ -3628,6 +3629,7 @@ private struct ListPane: Encodable {
   let title: String
   let cwd: String?
   let focused: Bool
+  let visible: Bool
   let agent: String?
 
   init(
@@ -3636,6 +3638,7 @@ private struct ListPane: Encodable {
     title: String,
     cwd: String?,
     focused: Bool,
+    visible: Bool,
     agent: String? = nil
   ) {
     self.id = id
@@ -3643,6 +3646,7 @@ private struct ListPane: Encodable {
     self.title = title
     self.cwd = cwd
     self.focused = focused
+    self.visible = visible
     self.agent = agent
   }
 }

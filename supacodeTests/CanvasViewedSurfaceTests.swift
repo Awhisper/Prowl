@@ -6,6 +6,19 @@ import Testing
 
 @MainActor
 struct CanvasViewedSurfaceTests {
+  @Test func surfaceVisibilityTracksTheRenderedViewport() {
+    let fixture = Fixture()
+
+    #expect(fixture.state.isVisibleSurface(fixture.surface.id))
+
+    fixture.surface.setFrameOrigin(NSPoint(x: 2_000, y: 2_000))
+    #expect(!fixture.state.isVisibleSurface(fixture.surface.id))
+
+    fixture.surface.setFrameOrigin(NSPoint(x: 20, y: 20))
+    fixture.window.reportsVisible = false
+    #expect(!fixture.state.isVisibleSurface(fixture.surface.id))
+  }
+
   @Test func actualCanvasFocusDoesNotDependOnNormalModeSelectionOrWindowCache() {
     let fixture = Fixture()
 

@@ -43,7 +43,8 @@ Non-JSON `prowl list` remains human-readable text and is intentionally outside t
           "id": "6E1A2A10-D99F-4E3F-920C-D93AA3C05764",
           "title": "zsh",
           "cwd": "/Users/onevcat/Projects/Prowl",
-          "focused": true
+          "focused": true,
+          "visible": true
         },
         "task": {
           "status": "running"
@@ -66,7 +67,8 @@ Non-JSON `prowl list` remains human-readable text and is intentionally outside t
           "id": "EF65FF31-1B72-40B2-80DA-3AA87B7B6858",
           "title": "Notes",
           "cwd": "/Users/onevcat/Projects/Notes",
-          "focused": false
+          "focused": false,
+          "visible": false
         },
         "task": {
           "status": "idle"
@@ -115,6 +117,8 @@ Every item in `data.items` represents exactly one actionable pane.
 - `title`: string
 - `cwd`: string or `null`
 - `focused`: boolean
+- `visible`: boolean; true when the surface intersects a visible viewport in an on-screen,
+  unminimized window
 - `agent`: optional detected-agent machine token when available
 
 ### `task`
@@ -126,6 +130,7 @@ Every item in `data.items` represents exactly one actionable pane.
 
 - `tab.selected == true` means the row's tab is the currently selected tab of that worktree.
 - `pane.focused == true` means the row is the current focused pane within its selected tab.
+- `pane.visible == true` includes visible background split panes and does not require focus.
 - At most one row in the whole payload should have `pane.focused == true`.
 - A worktree with split panes returns multiple rows that share the same `worktree` and `tab` objects but differ in `pane`.
 - The array order should be stable for a single call. Preferred order: worktree order, then tab order, then pane order.
@@ -182,7 +187,8 @@ Every item in `data.items` represents exactly one actionable pane.
           "id": "6E1A2A10-D99F-4E3F-920C-D93AA3C05764",
           "title": "build",
           "cwd": "/Users/onevcat/Projects/Prowl",
-          "focused": true
+          "focused": true,
+          "visible": true
         },
         "task": {
           "status": "running"
@@ -205,7 +211,8 @@ Every item in `data.items` represents exactly one actionable pane.
           "id": "1344AEF5-3BA6-4B75-A07E-1F36C63A34B0",
           "title": "tests",
           "cwd": "/Users/onevcat/Projects/Prowl",
-          "focused": false
+          "focused": false,
+          "visible": true
         },
         "task": {
           "status": "idle"

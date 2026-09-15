@@ -42,13 +42,15 @@ struct ListRuntimeSnapshot: Sendable {
     let handle: Int?
     let title: String
     let cwd: String?
+    let visible: Bool
     let agent: String?
 
-    init(id: UUID, handle: Int? = nil, title: String, cwd: String?, agent: String? = nil) {
+    init(id: UUID, handle: Int? = nil, title: String, cwd: String?, visible: Bool = false, agent: String? = nil) {
       self.id = id
       self.handle = handle
       self.title = title
       self.cwd = cwd
+      self.visible = visible
       self.agent = agent
     }
   }
@@ -131,6 +133,7 @@ final class ListCommandHandler: CommandHandler {
                 title: pane.title,
                 cwd: pane.cwd,
                 focused: isFocused,
+                visible: pane.visible,
                 agent: pane.agent
               ),
               task: ListCommandTask(status: worktree.taskStatus)

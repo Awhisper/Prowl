@@ -31,6 +31,7 @@ struct CLIListCommandHandlerTests {
                     handle: 2,
                     title: "tests",
                     cwd: "/Users/onevcat/Projects/Prowl",
+                    visible: true,
                     agent: "codex"
                   ),
                   .init(
@@ -38,6 +39,7 @@ struct CLIListCommandHandlerTests {
                     handle: 3,
                     title: "build",
                     cwd: "/Users/onevcat/Projects/Prowl",
+                    visible: true,
                     agent: nil
                   ),
                 ]
@@ -64,6 +66,7 @@ struct CLIListCommandHandlerTests {
                     handle: 5,
                     title: "notes",
                     cwd: "/Users/onevcat/Projects/Notes",
+                    visible: false,
                     agent: nil
                   )
                 ]
@@ -101,6 +104,9 @@ struct CLIListCommandHandlerTests {
     #expect(payload.items[2].task.status == .idle)
     #expect(payload.items[0].pane.agent == "codex")
     #expect(payload.items[1].pane.agent == nil)
+    #expect(payload.items[0].pane.visible)
+    #expect(payload.items[1].pane.visible)
+    #expect(!payload.items[2].pane.visible)
     #expect(payload.items.allSatisfy { $0.tab.handle == nil && $0.pane.handle == nil })
     let rawPayload = try #require(response.data?.bytes)
     let rawPayloadString = try #require(String(bytes: rawPayload, encoding: .utf8))
