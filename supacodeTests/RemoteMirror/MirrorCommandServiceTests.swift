@@ -198,7 +198,7 @@ struct MirrorCommandServiceTests {
         worktree: .init(id: "w", name: "main", path: "/Project", rootPath: "/Project", kind: .git),
         tab: .init(id: "t", title: "Terminal", selected: true),
         pane: .init(
-          id: paneID.uuidString, title: "Terminal", cwd: "/Project", focused: true, agent: agent),
+          id: paneID.uuidString, title: "Terminal", cwd: "/Project", focused: true, visible: true, agent: agent),
         task: .init(status: state))
       do {
         return CommandResponse(
