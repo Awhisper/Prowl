@@ -135,6 +135,7 @@ syms = [
     ('recentCandidates',              1.57),
     ('stepTransactionFlush',           None),
     ('GraphHost.flushTransactions()',  None),
+    ('flushTransactions',              None),
     ('addGlyph',                       None),
     ('rebuildRow',                     None),
     ('wyhash',                         None),
@@ -142,6 +143,13 @@ syms = [
     ('SidebarActiveAgentsOverlay',     None),
 ]
 tot = {s: 0 for s, _ in syms}
+# Each row is an independent substring total, so a general symbol would also count
+# the frames a more specific row already reports. Exclude those, and say so.
+excluded = {'flushTransactions': ('GraphHost.flushTransactions()',)}
+labels = {'flushTransactions': 'flushTransactions (excluding GraphHost)'}
+
+def matches(s, sym):
+    return s in sym and not any(x in sym for x in excluded.get(s, ()))
 
 for idx, (i, _t, _desc) in enumerate(hdr):
     end = hdr[idx + 1][0] if idx + 1 < len(hdr) else len(lines)
@@ -154,7 +162,7 @@ for idx, (i, _t, _desc) in enumerate(hdr):
     for s, _ in syms:
         counted, mind = [], None
         for d, c, sym in ent:
-            if s in sym:
+            if matches(s, sym):
                 if mind is None or d <= mind:
                     counted.append(c)
                     mind = d
@@ -166,7 +174,7 @@ print(f"{'%core':>7}  {'was':>7}   symbol")
 for s, base in syms:
     pct = 100 * tot[s] / W
     was = f"{base:.2f}%" if base is not None else "  -  "
-    print(f"{pct:6.2f}%  {was:>7}   {s}")
+    print(f"{pct:6.2f}%  {was:>7}   {labels.get(s, s)}")
 
 det = 100 * tot['detectAgentState'] / W
 if det > 0:

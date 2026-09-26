@@ -87,6 +87,7 @@ cat > "$output" <<'SAMPLE'
     100 Thread_1 DispatchQueue_1: com.apple.main-thread
       11 stepTransactionFlush
       13 GraphHost.flushTransactions()
+      7 flushTransactions
       17 addGlyph
       19 rebuildRow
       23 wyhash
@@ -147,6 +148,7 @@ grep -Fq \
   <<< "$MEASURE_OUTPUT"
 grep -Eq '11\.00% +-[[:space:]]+stepTransactionFlush' <<< "$MEASURE_OUTPUT"
 grep -Eq '13\.00% +-[[:space:]]+GraphHost\.flushTransactions\(\)' <<< "$MEASURE_OUTPUT"
+grep -Eq '7\.00% +-[[:space:]]+flushTransactions \(excluding GraphHost\)' <<< "$MEASURE_OUTPUT"
 grep -Eq '17\.00% +-[[:space:]]+addGlyph' <<< "$MEASURE_OUTPUT"
 grep -Eq '19\.00% +-[[:space:]]+rebuildRow' <<< "$MEASURE_OUTPUT"
 grep -Eq '23\.00% +-[[:space:]]+wyhash' <<< "$MEASURE_OUTPUT"
