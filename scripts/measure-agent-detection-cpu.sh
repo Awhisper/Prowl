@@ -83,6 +83,21 @@ jq -r 'if .ok then "total=\(.data.agents|length)   " + (.data.agents|group_by(.s
   < "$OUT/agents.json" 2>/dev/null || echo "CLI unavailable"
 echo
 
+echo "=== pane visibility ==="
+prowl list --json 2>/dev/null > "$OUT/panes.json" || printf '{"ok":false}\n' > "$OUT/panes.json"
+jq -r '
+  if .ok then
+    .data.items as $items
+    | "total=\($items | length)"
+      + "   visible=\(if $items | all(.pane | has("visible")) then $items | map(select(.pane.visible)) | length else "unknown" end)"
+      + "   focused=\($items | map(select(.pane.focused)) | length)"
+      + "   tabs=\($items | map(.tab.id) | unique | length)"
+      + "   selected_tabs=\($items | map(select(.tab.selected) | .tab.id) | unique | length)"
+      + "   worktrees=\($items | map(.worktree.id) | unique | length)"
+  else "CLI unavailable" end
+' < "$OUT/panes.json" 2>/dev/null || echo "CLI unavailable"
+echo
+
 echo "=== process CPU (20 s) ==="
 top -l 21 -s 1 -pid "$PID" -stats pid,cpu 2>/dev/null \
   | grep -E "^ *$PID" | awk '{print $2}' | tail -20 > "$OUT/cpu.txt"
@@ -118,7 +133,11 @@ syms = [
     ('normalize(',                    6.70),
     ('transcriptStrings',             2.47),
     ('recentCandidates',              1.57),
-    ('flushTransactions',              None),
+    ('stepTransactionFlush',           None),
+    ('GraphHost.flushTransactions()',  None),
+    ('addGlyph',                       None),
+    ('rebuildRow',                     None),
+    ('wyhash',                         None),
     ('RepositorySectionView',          None),
     ('SidebarActiveAgentsOverlay',     None),
 ]
@@ -159,4 +178,4 @@ PY
 
 echo
 echo "run dir: $OUT"
-echo "  sample.txt / cpu.txt / summary.txt"
+echo "  sample.txt / cpu.txt / summary.txt / agents.json / panes.json"

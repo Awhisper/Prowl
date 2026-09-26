@@ -355,8 +355,9 @@ export-archive: # Export xarchive
 
 test: ensure-ghostty embed-cli-debug embed-docs embed-skills test-app
 
-test-scripts: # Run tests for the repository's Python scripts
+test-scripts: # Run tests for the repository's scripts
 	@python3 -m unittest discover -s "$(CURRENT_MAKEFILE_DIR)/scripts" -p 'test_*.py'
+	@bash "$(CURRENT_MAKEFILE_DIR)/scripts/test-performance-measurement-scripts.sh"
 
 # Real I/O deadlines run separately from the bulk suite's main-actor work.
 test-app: ensure-ghostty # Run app/unit tests via xcodebuild

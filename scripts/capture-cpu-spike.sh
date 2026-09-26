@@ -154,11 +154,24 @@ for _ in $(seq 1 "$ITERATIONS"); do
       + (.data.agents|group_by(.status)|map("\(.[0].status)=\(length)")|join("  "))
     else "CLI unavailable" end' < "$OUT/agents.json" 2>/dev/null || true
 
+  prowl list --json 2>/dev/null > "$OUT/panes.json" || printf '{"ok":false}\n' > "$OUT/panes.json"
+  jq -r '
+    if .ok then
+      .data.items as $items
+      | "pane mix: total=\($items | length)"
+        + "   visible=\(if $items | all(.pane | has("visible")) then $items | map(select(.pane.visible)) | length else "unknown" end)"
+        + "   focused=\($items | map(select(.pane.focused)) | length)"
+        + "   tabs=\($items | map(.tab.id) | unique | length)"
+        + "   selected_tabs=\($items | map(select(.tab.selected) | .tab.id) | unique | length)"
+        + "   worktrees=\($items | map(.worktree.id) | unique | length)"
+    else "pane mix: CLI unavailable" end
+  ' < "$OUT/panes.json" 2>/dev/null || true
+
   # Keep the header: it carries the window size every later attribution needs.
   sample "$PID" "$SAMPLE_SECONDS" -f "$OUT/sample.txt" >/dev/null 2>&1
   echo
   echo "captured: $OUT/sample.txt  ($(wc -l < "$OUT/sample.txt" | tr -d ' ') lines)"
-  echo "          $OUT/context.txt  $OUT/agents.json"
+  echo "          $OUT/context.txt  $OUT/agents.json  $OUT/panes.json"
   exit 0
 done
 
