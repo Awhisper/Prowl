@@ -79,7 +79,9 @@ public struct ListCommandPane: Codable, Equatable {
   public let title: String
   public let cwd: String?
   public let focused: Bool
-  public let visible: Bool
+  /// Whether the surface occupies a visible part of an on-screen window. The app always
+  /// sends it; `nil` means the response came from an app that predates the field.
+  public let visible: Bool?
   /// The coding agent detected in this pane (e.g. "claude", "codex"), or nil if none.
   /// Stable machine token (`DetectedAgent.rawValue`); useful for handoff orchestration.
   public let agent: String?
@@ -90,7 +92,7 @@ public struct ListCommandPane: Codable, Equatable {
     title: String,
     cwd: String?,
     focused: Bool,
-    visible: Bool = false,
+    visible: Bool?,
     agent: String? = nil
   ) {
     self.id = id
