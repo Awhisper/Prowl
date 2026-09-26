@@ -25,6 +25,16 @@ INTERVAL=${PROWL_SPIKE_INTERVAL:-2}
 MAX_WAIT=${PROWL_SPIKE_MAX_WAIT:-7200}
 NEEDED=${PROWL_SPIKE_CONSECUTIVE:-2}
 
+# Runs a prowl query into a file, giving up after SAMPLE_SECONDS so a stalled CLI can
+# neither block nor outlive the sample it annotates. perl's alarm survives the exec.
+capture_cli() {
+  local out=$1
+  shift
+  # The group's stderr also takes bash's own "Alarm clock" notice for a timed-out call.
+  { /usr/bin/perl -e 'alarm shift @ARGV; exec @ARGV or exit 127' "$SAMPLE_SECONDS" prowl "$@" > "$out"; } \
+    2>/dev/null || printf '{"ok":false}\n' > "$out"
+}
+
 usage_error() {
   echo "$1" >&2
   exit 64
@@ -136,8 +146,12 @@ for _ in $(seq 1 "$ITERATIONS"); do
 
   echo
   echo "=== spike: sampling for ${SAMPLE_SECONDS}s ==="
-  # Context first: a spike figure without its workload cannot be compared to any
-  # other run, and the host may simply be overcommitted.
+  # Sample first: the spike may not last, and nothing below may delay it. Context
+  # is recorded while the sample runs, because a spike figure without its workload
+  # cannot be compared to any other run, and the host may simply be overcommitted.
+  # Keep the header: it carries the window size every later attribution needs.
+  sample "$PID" "$SAMPLE_SECONDS" -f "$OUT/sample.txt" >/dev/null 2>&1 &
+  SAMPLE_PID=$!
   {
     echo "triggered_at: $(date -Iseconds)"
     echo "observed:     ${PCT}% of one core (threshold ${THRESHOLD}%)"
@@ -149,12 +163,12 @@ for _ in $(seq 1 "$ITERATIONS"); do
   } > "$OUT/context.txt"
   cat "$OUT/context.txt"
 
-  prowl agents --json 2>/dev/null > "$OUT/agents.json" || printf '{"ok":false}\n' > "$OUT/agents.json"
+  capture_cli "$OUT/agents.json" agents --json
   jq -r 'if .ok then "agent mix: total=\(.data.agents|length)   "
       + (.data.agents|group_by(.status)|map("\(.[0].status)=\(length)")|join("  "))
     else "CLI unavailable" end' < "$OUT/agents.json" 2>/dev/null || true
 
-  prowl list --json 2>/dev/null > "$OUT/panes.json" || printf '{"ok":false}\n' > "$OUT/panes.json"
+  capture_cli "$OUT/panes.json" list --json
   jq -r '
     if .ok then
       .data.items as $items
@@ -167,8 +181,7 @@ for _ in $(seq 1 "$ITERATIONS"); do
     else "pane mix: CLI unavailable" end
   ' < "$OUT/panes.json" 2>/dev/null || true
 
-  # Keep the header: it carries the window size every later attribution needs.
-  sample "$PID" "$SAMPLE_SECONDS" -f "$OUT/sample.txt" >/dev/null 2>&1
+  wait "$SAMPLE_PID"
   echo
   echo "captured: $OUT/sample.txt  ($(wc -l < "$OUT/sample.txt" | tr -d ' ') lines)"
   echo "          $OUT/context.txt  $OUT/agents.json  $OUT/panes.json"

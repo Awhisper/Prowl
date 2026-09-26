@@ -52,6 +52,8 @@ case "$1" in
     echo '{"ok":true,"data":{"agents":[{"status":"working"},{"status":"idle"}]}}'
     ;;
   list)
+    # A stalled CLI must not block or delay the sample.
+    if [ -n "${PROWL_FAKE_LIST_STALLS:-}" ]; then exec /bin/sleep 30; fi
     cat <<'JSON'
 {"ok":true,"data":{"items":[
   {"worktree":{"id":"w1"},"tab":{"id":"t1","selected":true},"pane":{"id":"p1","focused":true,"visible":true}},
@@ -108,6 +110,27 @@ test -f "$SPIKE_DIR/panes.json"
 grep -Fq \
   'pane mix: total=3   visible=2   focused=1   tabs=2   selected_tabs=2   worktrees=2' \
   <<< "$SPIKE_OUTPUT"
+
+rm -f "$TEST_ROOT/ps-state"
+STALL_MEASUREMENTS="$TEST_ROOT/stall-measurements"
+mkdir -p "$STALL_MEASUREMENTS"
+STALL_STARTED=$SECONDS
+STALL_OUTPUT=$(
+  PATH="$BIN:$PATH" \
+    PROWL_PID=$$ \
+    PROWL_MEASURE_DIR="$STALL_MEASUREMENTS" \
+    PROWL_SPIKE_INTERVAL=1 \
+    PROWL_SPIKE_MAX_WAIT=1 \
+    PROWL_SPIKE_CONSECUTIVE=1 \
+    PROWL_FAKE_LIST_STALLS=1 \
+    bash "$ROOT/scripts/capture-cpu-spike.sh" 50 1
+)
+STALL_ELAPSED=$((SECONDS - STALL_STARTED))
+[ "$STALL_ELAPSED" -lt 10 ] || { echo "stalled prowl list held the spike capture for ${STALL_ELAPSED}s" >&2; exit 1; }
+STALL_DIR=$(find "$STALL_MEASUREMENTS/spikes" -mindepth 1 -maxdepth 1 -type d)
+grep -Fq 'stepTransactionFlush' "$STALL_DIR/sample.txt"
+grep -Fq '{"ok":false}' "$STALL_DIR/panes.json"
+grep -Fq 'pane mix: CLI unavailable' <<< "$STALL_OUTPUT"
 
 rm -f "$TEST_ROOT/ps-state"
 MEASURE_OUTPUT=$(
