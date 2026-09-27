@@ -25,18 +25,50 @@ INTERVAL=${PROWL_SPIKE_INTERVAL:-2}
 MAX_WAIT=${PROWL_SPIKE_MAX_WAIT:-7200}
 NEEDED=${PROWL_SPIKE_CONSECUTIVE:-2}
 
-# Runs a prowl query into a file, giving up at DEADLINE (epoch seconds) so the answer
-# always describes the sampled window; a query that misses it records {"ok":false}.
+# A CLI query may take this long before it is abandoned. Its answer is only kept if it
+# arrived inside the sampled window (see keep_if_inside_sample), so the timeout just
+# bounds how long the script waits; it does not decide correctness.
+CLI_TIMEOUT=$((SAMPLE_SECONDS + 5))
+
+# Runs a prowl query into a file and marks when the answer arrived. The marker is a
+# file created by a shell builtin; its modification time is the kernel's clock, so a
+# delayed shell can only make the answer look later, never earlier.
 # perl's alarm survives the exec.
-capture_cli() {
+query_cli() {
   local out=$1
   shift
   # The group's stderr also takes bash's own "Alarm clock" notice for a timed-out call.
-  {
-    /usr/bin/perl -MTime::HiRes=time,alarm \
-      -e 'my $left = shift(@ARGV) - time; exit 142 if $left <= 0; alarm $left; exec @ARGV or exit 127' \
-      "$DEADLINE" prowl "$@" > "$out"
-  } 2>/dev/null || printf '{"ok":false}\n' > "$out"
+  { /usr/bin/perl -e 'alarm shift @ARGV; exec @ARGV or exit 127' "$CLI_TIMEOUT" prowl "$@" > "$out"; } \
+    2>/dev/null || printf '{"ok":false,"reason":"no answer within %ss"}\n' "$CLI_TIMEOUT" > "$out"
+  : > "$out.answered"
+}
+
+# Prints when sample(1) began sampling, as epoch seconds, from its own Date/Time header.
+sample_started_at() {
+  /usr/bin/perl -MTime::Local -ne '
+    if (/^Date\/Time:\s+(\d+)-(\d+)-(\d+) (\d+):(\d+):(\d+)(\.\d+)? ([+-])(\d\d)(\d\d)/) {
+      my $utc = timegm($6, $5, $4, $3, $2 - 1, $1) + ($7 || 0);
+      my $offset = ($9 * 3600 + $10 * 60) * ($8 eq "+" ? 1 : -1);
+      printf "%.3f\n", $utc - $offset;
+      exit;
+    }' "$1" 2>/dev/null || true
+}
+
+# Keeps a query's answer only if it arrived between the sample's launch and the end of
+# its sampling, and otherwise replaces it with {"ok":false} and the reason.
+keep_if_inside_sample() {
+  local out=$1
+  local answered reason=
+  answered=$(/usr/bin/stat -f %Fm "$out.answered")
+  if [ -z "$WINDOW_END" ]; then
+    reason="the sample recorded no start time"
+  elif ! awk -v a="$answered" -v s="$WINDOW_START" -v e="$WINDOW_END" 'BEGIN { exit !(a >= s && a <= e) }'; then
+    reason="answered outside the sample window"
+  fi
+  if [ -n "$reason" ] && jq -e '.ok' < "$out" > /dev/null 2>&1; then
+    printf '{"ok":false,"reason":"%s"}\n' "$reason" > "$out"
+  fi
+  rm -f "$out.answered"
 }
 
 usage_error() {
@@ -148,22 +180,22 @@ for _ in $(seq 1 "$ITERATIONS"); do
 
   [ "$STREAK" -ge "$NEEDED" ] || continue
 
-  echo
-  echo "=== spike: sampling for ${SAMPLE_SECONDS}s ==="
-  # Sample first: the spike may not last, and nothing below may delay it. Context
-  # is recorded while the sample runs, because a spike figure without its workload
-  # cannot be compared to any other run, and the host may simply be overcommitted.
+  # Sample first: the spike may not last, so nothing runs ahead of the launch.
   # Keep the header: it carries the window size every later attribution needs.
-  # Both queries share the sample's end as their deadline and run side by side, so a
-  # slow answer to one cannot push the other past the window. The deadline is taken
-  # before the launch, so a shell delayed after it cannot move the deadline later.
-  DEADLINE=$(/usr/bin/perl -MTime::HiRes=time -e 'printf "%.3f", time + shift' "$SAMPLE_SECONDS")
   sample "$PID" "$SAMPLE_SECONDS" -f "$OUT/sample.txt" >/dev/null 2>&1 &
   SAMPLE_PID=$!
-  capture_cli "$OUT/agents.json" agents --json &
+  : > "$OUT/.sample-launched"
+  # The CLI queries run side by side while the sample runs. Whether an answer describes
+  # the sampled window is decided after the sample ends, from the sample's own clock.
+  query_cli "$OUT/agents.json" agents --json &
   AGENTS_PID=$!
-  capture_cli "$OUT/panes.json" list --json &
+  query_cli "$OUT/panes.json" list --json &
   PANES_PID=$!
+
+  echo
+  echo "=== spike: sampling for ${SAMPLE_SECONDS}s ==="
+  # Context is recorded while the sample runs, because a spike figure without its
+  # workload cannot be compared to any other run, and the host may be overcommitted.
   {
     echo "triggered_at: $(date -Iseconds)"
     echo "observed:     ${PCT}% of one core (threshold ${THRESHOLD}%)"
@@ -175,10 +207,23 @@ for _ in $(seq 1 "$ITERATIONS"); do
   } > "$OUT/context.txt"
   cat "$OUT/context.txt"
 
+  wait "$SAMPLE_PID"
   wait "$AGENTS_PID" "$PANES_PID"
+  # The window opens at the launch and closes when sampling ends: sample(1)'s own start
+  # plus its duration. Neither bound depends on when this shell got to run.
+  WINDOW_START=$(/usr/bin/stat -f %Fm "$OUT/.sample-launched")
+  SAMPLING_STARTED=$(sample_started_at "$OUT/sample.txt")
+  WINDOW_END=
+  if [ -n "$SAMPLING_STARTED" ]; then
+    WINDOW_END=$(awk -v s="$SAMPLING_STARTED" -v d="$SAMPLE_SECONDS" 'BEGIN { printf "%.3f", s + d }')
+  fi
+  keep_if_inside_sample "$OUT/agents.json"
+  keep_if_inside_sample "$OUT/panes.json"
+  rm -f "$OUT/.sample-launched"
+
   jq -r 'if .ok then "agent mix: total=\(.data.agents|length)   "
       + (.data.agents|group_by(.status)|map("\(.[0].status)=\(length)")|join("  "))
-    else "CLI unavailable" end' < "$OUT/agents.json" 2>/dev/null || true
+    else "CLI unavailable" + (if .reason then " (\(.reason))" else "" end) end' < "$OUT/agents.json" 2>/dev/null || true
 
   jq -r '
     if .ok then
@@ -189,10 +234,9 @@ for _ in $(seq 1 "$ITERATIONS"); do
         + "   tabs=\($items | map(.tab.id) | unique | length)"
         + "   selected_tabs=\($items | map(select(.tab.selected) | .tab.id) | unique | length)"
         + "   worktrees=\($items | map(.worktree.id) | unique | length)"
-    else "pane mix: CLI unavailable" end
+    else "pane mix: CLI unavailable" + (if .reason then " (\(.reason))" else "" end) end
   ' < "$OUT/panes.json" 2>/dev/null || true
 
-  wait "$SAMPLE_PID"
   echo
   echo "captured: $OUT/sample.txt  ($(wc -l < "$OUT/sample.txt" | tr -d ' ') lines)"
   echo "          $OUT/context.txt  $OUT/agents.json  $OUT/panes.json"
