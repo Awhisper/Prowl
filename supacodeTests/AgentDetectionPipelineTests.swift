@@ -61,10 +61,9 @@ struct AgentDetectionPipelineTests {
     #expect(pane.isBusy)
   }
 
-  @Test func liveBackgroundAgentsAreReportedBusyEndToEnd() async throws {
-    // Claude Code 2.1.220: the main turn has finished while background agents still run,
-    // so the only live signal is the agent switcher below the composer.
-    let screen = """
+  /// Claude Code 2.1.220: the main turn has finished while background agents still run,
+  /// so the only live signal is the agent switcher below the composer.
+  private static let backgroundAgentsScreen = """
       ⏺ Waiting for the background agents to report.
 
       ✻ Waiting for 2 background agents to finish
@@ -80,16 +79,8 @@ struct AgentDetectionPipelineTests {
         ◯ general-purpose  Review the tests         4m 29s · ↓ 178.9k tokens
       """
 
-    let pane = try #require(await report(screen))
-    #expect(pane.fallbackState == .working)
-    #expect(pane.displayState == .working)
-    #expect(pane.isBusy)
-  }
-
-  @Test func finishedPaneIsReportedIdleEndToEnd() async throws {
-    // Negative control for the two tests above: every background agent has finished and
-    // the switcher is gone, so nothing may hold the pane busy.
-    let screen = """
+  /// The same pane after every background agent has finished: the switcher is gone.
+  private static let finishedScreen = """
       ⏺ All three agents returned.
 
       ─────────
@@ -100,8 +91,23 @@ struct AgentDetectionPipelineTests {
         ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
       """
 
-    let pane = try #require(await report(screen))
+  @Test func liveBackgroundAgentsAreReportedBusyEndToEnd() async throws {
+    let pane = try #require(await report(Self.backgroundAgentsScreen))
+    #expect(pane.fallbackState == .working)
+    #expect(pane.displayState == .working)
+    #expect(pane.isBusy)
+  }
+
+  @Test func finishedBackgroundAgentsReleaseTheBusyPane() async throws {
+    // Negative control for the two tests above, through one coordinator: the pane that
+    // was busy on the switcher must stop being busy once the switcher is gone.
+    let busy = try #require(await report(Self.backgroundAgentsScreen))
+    #expect(busy.isBusy)
+
+    clock.now += 5
+    let pane = try #require(await report(Self.finishedScreen))
     #expect(pane.fallbackState == .idle)
+    #expect(pane.state == .idle)
     #expect(pane.displayState == .idle)
     #expect(!pane.isBusy)
   }
