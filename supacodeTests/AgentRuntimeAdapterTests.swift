@@ -305,13 +305,18 @@ struct AgentRuntimeAdapterTests {
 
   @Test func runtimeSuggestionsMatchCurrentCapabilities() {
     let codex = AgentRuntimeAdapterRegistry.adapter(for: .codex)
-    #expect(codex?.modelSuggestions == ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"])
+    #expect(
+      codex?.modelSuggestions
+        == ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]
+    )
     #expect(codex?.reasoningEffortSuggestions == ["low", "medium", "high", "xhigh", "max"])
 
     let claude = AgentRuntimeAdapterRegistry.adapter(for: .claude)
     #expect(
-      claude?.modelSuggestions
-        == ["claude-fable-5", "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5-20251001"]
+      claude?.modelSuggestions == [
+        "claude-fable-5-1", "claude-opus-5-5", "claude-sonnet-5", "claude-haiku-4-5-20251001",
+        "claude-fable-5", "claude-opus-5",
+      ]
     )
     #expect(claude?.reasoningEffortSuggestions == ["low", "medium", "high", "xhigh", "max"])
   }

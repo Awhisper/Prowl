@@ -338,7 +338,14 @@ nonisolated private struct CodexRuntimeAdapter: AgentRuntimeAdapter {
     nativeEvents: AgentNativeHookDecoder.nativeEvents(for: .codex)
   )
   let reasoningEffortSuggestions = ["low", "medium", "high", "xhigh", "max"]
-  let modelSuggestions = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"]
+  let modelSuggestions = [
+    "gpt-6-astra",
+    "gpt-6-sol",
+    "gpt-6-luna",
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+  ]
 
   func observe(arguments: [String]) -> AgentLaunchObservation {
     AgentLaunchObservation(
@@ -381,10 +388,12 @@ nonisolated private struct ClaudeCodeRuntimeAdapter: AgentRuntimeAdapter {
   )
   let reasoningEffortSuggestions = ["low", "medium", "high", "xhigh", "max"]
   let modelSuggestions = [
-    "claude-fable-5",
-    "claude-opus-5",
+    "claude-fable-5-1",
+    "claude-opus-5-5",
     "claude-sonnet-5",
     "claude-haiku-4-5-20251001",
+    "claude-fable-5",
+    "claude-opus-5",
   ]
 
   func observe(arguments: [String]) -> AgentLaunchObservation {
