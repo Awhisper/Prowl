@@ -9,8 +9,10 @@ import Testing
 /// and `AgentStateMachineTests` proves `event -> AgentStateDecision`, but each stage is
 /// driven by a hand-built input of its own type, so nothing verifies that a screen reaches
 /// the status the sidebar and `prowl list` report. These tests start from a screen and run
-/// the stages production runs for a pane with no process generation: the agent's screen
-/// profile, `AgentDetectionCoordinator`, and `PaneAgentState`.
+/// the stages production runs on each poll: the agent's screen profile,
+/// `AgentDetectionCoordinator`, and `PaneAgentState`. Most cases take the screen path of a
+/// pane with no process generation; one supplies a generation and native status through
+/// the coordinator's provider sample.
 @MainActor
 struct AgentDetectionPipelineTests {
   private final class Clock {
@@ -28,11 +30,16 @@ struct AgentDetectionPipelineTests {
 
   /// Runs one captured screen through detection, coordination, and pane state, as
   /// `WorktreeTerminalState` does on each poll.
-  private func report(_ screen: String, agent: DetectedAgent = .claude) async -> PaneAgentState? {
+  private func report(
+    _ screen: String,
+    agent: DetectedAgent = .claude,
+    through coordinator: AgentDetectionCoordinator? = nil,
+    process: AgentProcessGeneration? = nil
+  ) async -> PaneAgentState? {
     let detection = agent.detectScreen(in: screen)
-    let decision = await coordinator.observe(
+    let decision = await (coordinator ?? self.coordinator).observe(
       agent: agent,
-      process: nil,
+      process: process,
       screen: detection,
       screenContentID: detection.state == .blocked ? screen.hashValue : nil,
       capturedAt: clock.now,
@@ -64,32 +71,32 @@ struct AgentDetectionPipelineTests {
   /// Claude Code 2.1.220: the main turn has finished while background agents still run,
   /// so the only live signal is the agent switcher below the composer.
   private static let backgroundAgentsScreen = """
-      ⏺ Waiting for the background agents to report.
+    ⏺ Waiting for the background agents to report.
 
-      ✻ Waiting for 2 background agents to finish
-      ─────────
-      ❯
-      ─────────
-        [Opus 5 (1M context)] | ############--------  60% | $XX.XX
-        🟢
-        ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
+    ✻ Waiting for 2 background agents to finish
+    ─────────
+    ❯
+    ─────────
+      [Opus 5 (1M context)] | ############--------  60% | $XX.XX
+      🟢
+      ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
 
-        ⏺ main
-        ◯ Explore  Survey the parser                1m 6s · ↓ 28.6k tokens
-        ◯ general-purpose  Review the tests         4m 29s · ↓ 178.9k tokens
-      """
+      ⏺ main
+      ◯ Explore  Survey the parser                1m 6s · ↓ 28.6k tokens
+      ◯ general-purpose  Review the tests         4m 29s · ↓ 178.9k tokens
+    """
 
   /// The same pane after every background agent has finished: the switcher is gone.
   private static let finishedScreen = """
-      ⏺ All three agents returned.
+    ⏺ All three agents returned.
 
-      ─────────
-      ❯
-      ─────────
-        [Opus 5 (1M context)] | --------------------  0% | $XX.XX
-        🟢
-        ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
-      """
+    ─────────
+    ❯
+    ─────────
+      [Opus 5 (1M context)] | --------------------  0% | $XX.XX
+      🟢
+      ⏵⏵ auto mode on (shift+tab to cycle) · ← for agents
+    """
 
   @Test func liveBackgroundAgentsAreReportedBusyEndToEnd() async throws {
     let pane = try #require(await report(Self.backgroundAgentsScreen))
@@ -110,6 +117,37 @@ struct AgentDetectionPipelineTests {
     #expect(pane.state == .idle)
     #expect(pane.displayState == .idle)
     #expect(!pane.isBusy)
+  }
+
+  @Test func nativeStatusDecidesALivePaneOverItsScreen() async throws {
+    // A live pane has a process generation, so after the screen the coordinator samples
+    // the Claude runtime provider. While native status is available it decides the state,
+    // including over a screen that reads idle.
+    final class Native {
+      var state: AgentRawState = .working
+      var updatedAt: TimeInterval = 1
+    }
+    let native = Native()
+    let clock = clock
+    let live = AgentDetectionCoordinator(
+      sample: { _, _ in
+        [.native(AgentNativeSnapshot(sessionID: "session", state: native.state, statusUpdatedAt: native.updatedAt))]
+      },
+      time: { clock.now }
+    )
+    let generation = AgentProcessGeneration(pid: 42, startedAt: Date(timeIntervalSince1970: 1))
+
+    let working = try #require(await report(Self.finishedScreen, through: live, process: generation))
+    #expect(working.fallbackState == .idle)
+    #expect(working.displayState == .working)
+    #expect(working.isBusy)
+
+    native.state = .idle
+    native.updatedAt = 2
+    clock.now += 1
+    let idle = try #require(await report(Self.finishedScreen, through: live, process: generation))
+    #expect(idle.displayState == .idle)
+    #expect(!idle.isBusy)
   }
 
   @Test func blockedPromptReplacesAWorkingTurnAtOnce() async throws {
