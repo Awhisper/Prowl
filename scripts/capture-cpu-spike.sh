@@ -154,11 +154,12 @@ for _ in $(seq 1 "$ITERATIONS"); do
   # is recorded while the sample runs, because a spike figure without its workload
   # cannot be compared to any other run, and the host may simply be overcommitted.
   # Keep the header: it carries the window size every later attribution needs.
+  # Both queries share the sample's end as their deadline and run side by side, so a
+  # slow answer to one cannot push the other past the window. The deadline is taken
+  # before the launch, so a shell delayed after it cannot move the deadline later.
+  DEADLINE=$(/usr/bin/perl -MTime::HiRes=time -e 'printf "%.3f", time + shift' "$SAMPLE_SECONDS")
   sample "$PID" "$SAMPLE_SECONDS" -f "$OUT/sample.txt" >/dev/null 2>&1 &
   SAMPLE_PID=$!
-  # Both queries share the sample's end as their deadline and run side by side, so a
-  # slow answer to one cannot push the other past the window.
-  DEADLINE=$(/usr/bin/perl -MTime::HiRes=time -e 'printf "%.3f", time + shift' "$SAMPLE_SECONDS")
   capture_cli "$OUT/agents.json" agents --json &
   AGENTS_PID=$!
   capture_cli "$OUT/panes.json" list --json &
