@@ -25,14 +25,18 @@ INTERVAL=${PROWL_SPIKE_INTERVAL:-2}
 MAX_WAIT=${PROWL_SPIKE_MAX_WAIT:-7200}
 NEEDED=${PROWL_SPIKE_CONSECUTIVE:-2}
 
-# Runs a prowl query into a file, giving up after SAMPLE_SECONDS so a stalled CLI can
-# neither block nor outlive the sample it annotates. perl's alarm survives the exec.
+# Runs a prowl query into a file, giving up at DEADLINE (epoch seconds) so the answer
+# always describes the sampled window; a query that misses it records {"ok":false}.
+# perl's alarm survives the exec.
 capture_cli() {
   local out=$1
   shift
   # The group's stderr also takes bash's own "Alarm clock" notice for a timed-out call.
-  { /usr/bin/perl -e 'alarm shift @ARGV; exec @ARGV or exit 127' "$SAMPLE_SECONDS" prowl "$@" > "$out"; } \
-    2>/dev/null || printf '{"ok":false}\n' > "$out"
+  {
+    /usr/bin/perl -MTime::HiRes=time,alarm \
+      -e 'my $left = shift(@ARGV) - time; exit 142 if $left <= 0; alarm $left; exec @ARGV or exit 127' \
+      "$DEADLINE" prowl "$@" > "$out"
+  } 2>/dev/null || printf '{"ok":false}\n' > "$out"
 }
 
 usage_error() {
@@ -152,6 +156,13 @@ for _ in $(seq 1 "$ITERATIONS"); do
   # Keep the header: it carries the window size every later attribution needs.
   sample "$PID" "$SAMPLE_SECONDS" -f "$OUT/sample.txt" >/dev/null 2>&1 &
   SAMPLE_PID=$!
+  # Both queries share the sample's end as their deadline and run side by side, so a
+  # slow answer to one cannot push the other past the window.
+  DEADLINE=$(/usr/bin/perl -MTime::HiRes=time -e 'printf "%.3f", time + shift' "$SAMPLE_SECONDS")
+  capture_cli "$OUT/agents.json" agents --json &
+  AGENTS_PID=$!
+  capture_cli "$OUT/panes.json" list --json &
+  PANES_PID=$!
   {
     echo "triggered_at: $(date -Iseconds)"
     echo "observed:     ${PCT}% of one core (threshold ${THRESHOLD}%)"
@@ -163,12 +174,11 @@ for _ in $(seq 1 "$ITERATIONS"); do
   } > "$OUT/context.txt"
   cat "$OUT/context.txt"
 
-  capture_cli "$OUT/agents.json" agents --json
+  wait "$AGENTS_PID" "$PANES_PID"
   jq -r 'if .ok then "agent mix: total=\(.data.agents|length)   "
       + (.data.agents|group_by(.status)|map("\(.[0].status)=\(length)")|join("  "))
     else "CLI unavailable" end' < "$OUT/agents.json" 2>/dev/null || true
 
-  capture_cli "$OUT/panes.json" list --json
   jq -r '
     if .ok then
       .data.items as $items

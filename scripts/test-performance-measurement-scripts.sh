@@ -49,11 +49,16 @@ cat > "$BIN/prowl" <<'EOF'
 set -euo pipefail
 case "$1" in
   agents)
+    # A slow agents answer must not push the pane snapshot past the sample window.
+    if [ -n "${PROWL_FAKE_AGENTS_STALLS:-}" ]; then exec /bin/sleep 30; fi
     echo '{"ok":true,"data":{"agents":[{"status":"working"},{"status":"idle"}]}}'
     ;;
   list)
     # A stalled CLI must not block or delay the sample.
     if [ -n "${PROWL_FAKE_LIST_STALLS:-}" ]; then exec /bin/sleep 30; fi
+    if [ -n "${PROWL_FAKE_TIMES_DIR:-}" ]; then
+      /usr/bin/perl -MTime::HiRes=time -e 'printf "%.3f\n", time' > "$PROWL_FAKE_TIMES_DIR/list-answered"
+    fi
     cat <<'JSON'
 {"ok":true,"data":{"items":[
   {"worktree":{"id":"w1"},"tab":{"id":"t1","selected":true},"pane":{"id":"p1","focused":true,"visible":true}},
@@ -74,6 +79,9 @@ EOF
 cat > "$BIN/sample" <<'EOF'
 #!/bin/bash
 set -euo pipefail
+if [ -n "${PROWL_FAKE_TIMES_DIR:-}" ]; then
+  /usr/bin/perl -MTime::HiRes=time -e 'printf "%.3f\n", time' > "$PROWL_FAKE_TIMES_DIR/sample-started"
+fi
 output=
 while [ "$#" -gt 0 ]; do
   if [ "$1" = -f ]; then
@@ -132,6 +140,32 @@ STALL_DIR=$(find "$STALL_MEASUREMENTS/spikes" -mindepth 1 -maxdepth 1 -type d)
 grep -Fq 'stepTransactionFlush' "$STALL_DIR/sample.txt"
 grep -Fq '{"ok":false}' "$STALL_DIR/panes.json"
 grep -Fq 'pane mix: CLI unavailable' <<< "$STALL_OUTPUT"
+
+rm -f "$TEST_ROOT/ps-state"
+SLOW_AGENTS_MEASUREMENTS="$TEST_ROOT/slow-agents-measurements"
+TIMES="$TEST_ROOT/times"
+mkdir -p "$SLOW_AGENTS_MEASUREMENTS" "$TIMES"
+SLOW_AGENTS_OUTPUT=$(
+  PATH="$BIN:$PATH" \
+    PROWL_PID=$$ \
+    PROWL_MEASURE_DIR="$SLOW_AGENTS_MEASUREMENTS" \
+    PROWL_SPIKE_INTERVAL=1 \
+    PROWL_SPIKE_MAX_WAIT=1 \
+    PROWL_SPIKE_CONSECUTIVE=1 \
+    PROWL_FAKE_AGENTS_STALLS=1 \
+    PROWL_FAKE_TIMES_DIR="$TIMES" \
+    bash "$ROOT/scripts/capture-cpu-spike.sh" 50 1
+)
+SLOW_AGENTS_DIR=$(find "$SLOW_AGENTS_MEASUREMENTS/spikes" -mindepth 1 -maxdepth 1 -type d)
+grep -Fq '{"ok":false}' "$SLOW_AGENTS_DIR/agents.json"
+grep -Fq '"ok":true' "$SLOW_AGENTS_DIR/panes.json"
+grep -Fq 'pane mix: total=3' <<< "$SLOW_AGENTS_OUTPUT"
+# The one-second sample started at sample-started; the pane snapshot must fall inside it.
+awk -v start="$(cat "$TIMES/sample-started")" -v answered="$(cat "$TIMES/list-answered")" \
+  'BEGIN { exit !(answered - start < 1) }' || {
+  echo "pane snapshot answered $(cat "$TIMES/list-answered"), after the sample window from $(cat "$TIMES/sample-started")" >&2
+  exit 1
+}
 
 rm -f "$TEST_ROOT/ps-state"
 MEASURE_OUTPUT=$(
