@@ -56,6 +56,13 @@ case "$1" in
   list)
     # A stalled CLI must not block or delay the sample.
     if [ -n "${PROWL_FAKE_LIST_STALLS:-}" ]; then exec /bin/sleep 30; fi
+    # A snapshot that arrives after sampling has ended must never be saved.
+    if [ -n "${PROWL_FAKE_LIST_AFTER_SAMPLE:-}" ]; then
+      for _ in $(seq 1 3000); do
+        [ -f "$PROWL_FAKE_TIMES_DIR/sample-ended" ] && break
+        /bin/sleep 0.01
+      done
+    fi
     if [ -n "${PROWL_FAKE_TIMES_DIR:-}" ]; then
       /usr/bin/perl -MTime::HiRes=time -e 'printf "%.3f\n", time' > "$PROWL_FAKE_TIMES_DIR/list-answered"
     fi
@@ -82,6 +89,7 @@ set -euo pipefail
 if [ -n "${PROWL_FAKE_TIMES_DIR:-}" ]; then
   /usr/bin/perl -MTime::HiRes=time -e 'printf "%.3f\n", time' > "$PROWL_FAKE_TIMES_DIR/sample-started"
 fi
+seconds=$2
 output=
 while [ "$#" -gt 0 ]; do
   if [ "$1" = -f ]; then
@@ -91,6 +99,10 @@ while [ "$#" -gt 0 ]; do
     shift
   fi
 done
+# The timing cases need a sample that lasts its requested duration, like sample(1).
+if [ -n "${PROWL_FAKE_TIMES_DIR:-}" ]; then
+  /bin/sleep "$seconds"
+fi
 cat > "$output" <<'SAMPLE'
     100 Thread_1 DispatchQueue_1: com.apple.main-thread
       11 stepTransactionFlush
@@ -100,9 +112,27 @@ cat > "$output" <<'SAMPLE'
       19 rebuildRow
       23 wyhash
 SAMPLE
+if [ -n "${PROWL_FAKE_TIMES_DIR:-}" ]; then
+  /usr/bin/perl -MTime::HiRes=time -e 'printf "%.3f\n", time' > "$PROWL_FAKE_TIMES_DIR/sample-ended.tmp"
+  mv "$PROWL_FAKE_TIMES_DIR/sample-ended.tmp" "$PROWL_FAKE_TIMES_DIR/sample-ended"
+fi
 EOF
 
 chmod +x "$BIN"/*
+
+# The saved pane snapshot must have been answered while the fake sample was running.
+assert_snapshot_inside_sample() {
+  local times=$1
+  local started ended answered
+  started=$(cat "$times/sample-started")
+  ended=$(cat "$times/sample-ended")
+  answered=$(cat "$times/list-answered")
+  awk -v start="$started" -v end="$ended" -v answered="$answered" \
+    'BEGIN { exit !(answered >= start && answered <= end) }' || {
+    echo "pane snapshot answered at $answered, outside the sample from $started to $ended" >&2
+    exit 1
+  }
+}
 
 SPIKE_OUTPUT=$(
   PATH="$BIN:$PATH" \
@@ -160,12 +190,32 @@ SLOW_AGENTS_DIR=$(find "$SLOW_AGENTS_MEASUREMENTS/spikes" -mindepth 1 -maxdepth 
 grep -Fq '{"ok":false}' "$SLOW_AGENTS_DIR/agents.json"
 grep -Fq '"ok":true' "$SLOW_AGENTS_DIR/panes.json"
 grep -Fq 'pane mix: total=3' <<< "$SLOW_AGENTS_OUTPUT"
-# The one-second sample started at sample-started; the pane snapshot must fall inside it.
-awk -v start="$(cat "$TIMES/sample-started")" -v answered="$(cat "$TIMES/list-answered")" \
-  'BEGIN { exit !(answered - start < 1) }' || {
-  echo "pane snapshot answered $(cat "$TIMES/list-answered"), after the sample window from $(cat "$TIMES/sample-started")" >&2
-  exit 1
-}
+assert_snapshot_inside_sample "$TIMES"
+
+# A prowl list that answers only after sampling has ended must be refused, however
+# late the shell got to the queries after launching the sample.
+rm -f "$TEST_ROOT/ps-state"
+LATE_LIST_MEASUREMENTS="$TEST_ROOT/late-list-measurements"
+LATE_TIMES="$TEST_ROOT/late-times"
+mkdir -p "$LATE_LIST_MEASUREMENTS" "$LATE_TIMES"
+LATE_LIST_OUTPUT=$(
+  PATH="$BIN:$PATH" \
+    PROWL_PID=$$ \
+    PROWL_MEASURE_DIR="$LATE_LIST_MEASUREMENTS" \
+    PROWL_SPIKE_INTERVAL=1 \
+    PROWL_SPIKE_MAX_WAIT=1 \
+    PROWL_SPIKE_CONSECUTIVE=1 \
+    PROWL_FAKE_AGENTS_STALLS=1 \
+    PROWL_FAKE_LIST_AFTER_SAMPLE=1 \
+    PROWL_FAKE_TIMES_DIR="$LATE_TIMES" \
+    bash "$ROOT/scripts/capture-cpu-spike.sh" 50 1
+)
+LATE_LIST_DIR=$(find "$LATE_LIST_MEASUREMENTS/spikes" -mindepth 1 -maxdepth 1 -type d)
+if [ -f "$LATE_TIMES/list-answered" ] && grep -Fq '"ok":true' "$LATE_LIST_DIR/panes.json"; then
+  assert_snapshot_inside_sample "$LATE_TIMES"
+fi
+grep -Fq '{"ok":false}' "$LATE_LIST_DIR/panes.json"
+grep -Fq 'pane mix: CLI unavailable' <<< "$LATE_LIST_OUTPUT"
 
 rm -f "$TEST_ROOT/ps-state"
 MEASURE_OUTPUT=$(
