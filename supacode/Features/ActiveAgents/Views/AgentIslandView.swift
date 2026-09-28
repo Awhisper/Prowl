@@ -19,10 +19,7 @@ enum AgentIslandFloatingDragEvent {
 }
 
 struct AgentIslandRootLayout {
-  /// Use the existing 185pt cutout reference when no built-in notched display is available.
-  static let floatingCompactWidth = AgentIslandNotchLayout(
-    cutoutSize: CGSize(width: 185, height: 32)
-  ).compactWidth
+  static let floatingCompactWidth: CGFloat = 380
   static let fallbackFloatingCompactHeight: CGFloat = 40
   /// The notched roster matches the bar above it, but keeps the two-column callout width so its
   /// rows stay readable under a narrow cutout.

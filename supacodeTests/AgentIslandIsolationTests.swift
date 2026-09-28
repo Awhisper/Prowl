@@ -261,19 +261,19 @@ struct AgentIslandIsolationTests {
         notchCompactWidth: nil,
         isRosterExpanded: false,
         attentionEntryCount: 0
-      ) == 381)
+      ) == 380)
     #expect(
       AgentIslandRootLayout.width(
         notchCompactWidth: nil,
         isRosterExpanded: false,
         attentionEntryCount: 2
-      ) == 381)
+      ) == 380)
     #expect(
       AgentIslandRootLayout.width(
         notchCompactWidth: nil,
         isRosterExpanded: true,
         attentionEntryCount: 0
-      ) == 381)
+      ) == 380)
     #expect(
       AgentIslandRootLayout.width(
         notchCompactWidth: 425,
@@ -315,8 +315,8 @@ struct AgentIslandIsolationTests {
       id: "built-in", name: "Built-in", frame: .zero, visibleFrame: .zero,
       isBuiltIn: true, notchFrame: nil
     )
-    #expect(AgentIslandRootLayout.floatingWidth(screens: []) == 381)
-    #expect(AgentIslandRootLayout.floatingWidth(screens: [external, builtIn]) == 381)
+    #expect(AgentIslandRootLayout.floatingWidth(screens: []) == 380)
+    #expect(AgentIslandRootLayout.floatingWidth(screens: [external, builtIn]) == 380)
   }
 
   @Test func notchedRosterMatchesTheBarWidth() {
@@ -362,13 +362,13 @@ struct AgentIslandIsolationTests {
   @Test func floatingBarKeepsAStableWidthAndCompactsTheAllStateSummary() {
     #expect(!AgentIslandRootLayout.usesCompactFloatingSummary(stateCount: 3))
     #expect(AgentIslandRootLayout.usesCompactFloatingSummary(stateCount: 4))
-    #expect(AgentIslandRootLayout.floatingCompactWidth == 381)
+    #expect(AgentIslandRootLayout.floatingCompactWidth == 380)
     #expect(
       AgentIslandRootLayout.width(
         notchCompactWidth: nil,
         isRosterExpanded: false,
         attentionEntryCount: 0
-      ) == 381)
+      ) == 380)
   }
 
   @Test func coreAnimationRingStopsForReduceMotionAndIdle() {

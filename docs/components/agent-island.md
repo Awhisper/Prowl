@@ -21,7 +21,7 @@ icons so the bar covers as few menu bar items as possible. When the left wing ca
 state count, it hides the Idle count first; on other displays it is a centered
 floating bar overlaid directly on the menu bar at the same height. The floating bar and its
 expanded roster share a fixed width, based on the connected built-in notched display (with a
-380pt minimum), or 381pt when none is available. Expanding the roster does not change that width. It
+380pt minimum), or 380pt when none is available. Expanding the roster does not change that width. It
 stays visible across Spaces and over fullscreen applications and never becomes the active window.
 
 ## Exposure principle
