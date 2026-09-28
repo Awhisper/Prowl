@@ -121,8 +121,8 @@ struct AgentDetectionPipelineTests {
 
   @Test func nativeStatusDecidesALivePaneOverItsScreen() async throws {
     // A live pane has a process generation, so after the screen the coordinator samples
-    // the Claude runtime provider. While native status is available it decides the state,
-    // including over a screen that reads idle.
+    // the Claude runtime provider. While native status is available it decides the state:
+    // each step pairs native status with a screen that reads the opposite way.
     final class Native {
       var state: AgentRawState = .working
       var updatedAt: TimeInterval = 1
@@ -145,7 +145,8 @@ struct AgentDetectionPipelineTests {
     native.state = .idle
     native.updatedAt = 2
     clock.now += 1
-    let idle = try #require(await report(Self.finishedScreen, through: live, process: generation))
+    let idle = try #require(await report(Self.backgroundAgentsScreen, through: live, process: generation))
+    #expect(idle.fallbackState == .working)
     #expect(idle.displayState == .idle)
     #expect(!idle.isBusy)
   }
