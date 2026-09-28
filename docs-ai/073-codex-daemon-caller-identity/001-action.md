@@ -7,7 +7,7 @@
 | 2026-09-28 | Codex 0.158 working pane showed idle; screen rules fixed separately | #838 |
 | 2026-09-28 | Spike: TUI session log `client_user_message_id` ↔ rollout `client_id` maps panes to daemon threads | branch `spike/codex-daemon-log-detection` |
 | 2026-09-29 | Isolated `CODEX_HOME` checks of daemon environment inheritance and ancestry | this entry |
-| 2026-09-29 | Ancestry cut, `CODEX_THREAD_ID` mapping, `list` caller, skill and manual updates | this PR |
+| 2026-09-29 | Ancestry cut, `CODEX_THREAD_ID` mapping, `list` caller, skill and manual updates | #839 |
 
 ## Outcome & current state (as of 2026-09-29)
 

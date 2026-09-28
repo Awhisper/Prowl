@@ -4,7 +4,7 @@
 | --- | --- |
 | **Status** | Implemented |
 | **Anchor date** | 2026-09-29 |
-| **Primary PRs** | (fill in) |
+| **Primary PRs** | #839 |
 | **Related** | [064-agent-completion-signals](../064-agent-completion-signals/000-plan.md), [064.020 selection research](../064-agent-completion-signals/020-selection-channel-research.md), `docs/components/cli.md` |
 
 ## Background
