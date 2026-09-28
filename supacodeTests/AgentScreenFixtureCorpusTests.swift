@@ -23,6 +23,7 @@ struct AgentScreenFixtureCorpusTests {
 
     #expect(paths.contains("pi/0.85.0/working/framed-footer.txt"))
     #expect(paths.contains("codex/0.153.2/working/background-terminal-footer.txt"))
+    #expect(paths.contains("codex/0.158.0/working/tip-below-footer.txt"))
   }
 
   @Test func corpusRejectsUnexpectedRegularFiles() throws {
