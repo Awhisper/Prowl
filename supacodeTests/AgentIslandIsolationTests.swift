@@ -255,25 +255,25 @@ struct AgentIslandIsolationTests {
       ))
   }
 
-  @Test func compactPanelDoesNotRetainExpandedRosterWidth() {
+  @Test func floatingPanelKeepsTheSameWidthAcrossPresentationStates() {
     #expect(
       AgentIslandRootLayout.width(
         notchCompactWidth: nil,
         isRosterExpanded: false,
         attentionEntryCount: 0
-      ) == 340)
+      ) == 381)
     #expect(
       AgentIslandRootLayout.width(
         notchCompactWidth: nil,
         isRosterExpanded: false,
         attentionEntryCount: 2
-      ) == 380)
+      ) == 381)
     #expect(
       AgentIslandRootLayout.width(
         notchCompactWidth: nil,
         isRosterExpanded: true,
         attentionEntryCount: 0
-      ) == 420)
+      ) == 381)
     #expect(
       AgentIslandRootLayout.width(
         notchCompactWidth: 425,
@@ -281,6 +281,42 @@ struct AgentIslandIsolationTests {
         attentionEntryCount: 0
       ) == 425)
 
+  }
+
+  @Test(arguments: [CGFloat(150), 185, 208, 229])
+  func floatingWidthUsesTheBuiltInNotchAndStaysFixed(cutoutWidth: CGFloat) {
+    let builtIn = AgentIslandScreenDescriptor(
+      id: "built-in", name: "Built-in", frame: .zero, visibleFrame: .zero,
+      isBuiltIn: true,
+      notchFrame: CGRect(x: 0, y: 0, width: cutoutWidth, height: 32)
+    )
+    let width = AgentIslandRootLayout.floatingWidth(screens: [builtIn])
+    #expect(width == max(cutoutWidth + 196, 380))
+    for expanded in [false, true] {
+      for attentionCount in [0, 1, 2, 6, 7] {
+        #expect(
+          AgentIslandRootLayout.width(
+            notchCompactWidth: nil,
+            isRosterExpanded: expanded,
+            attentionEntryCount: attentionCount,
+            floatingCompactWidth: width
+          ) == width)
+      }
+    }
+  }
+
+  @Test func floatingWidthFallsBackWithoutABuiltInNotch() {
+    let external = AgentIslandScreenDescriptor(
+      id: "external", name: "External", frame: .zero, visibleFrame: .zero,
+      isBuiltIn: false,
+      notchFrame: CGRect(x: 0, y: 0, width: 229, height: 32)
+    )
+    let builtIn = AgentIslandScreenDescriptor(
+      id: "built-in", name: "Built-in", frame: .zero, visibleFrame: .zero,
+      isBuiltIn: true, notchFrame: nil
+    )
+    #expect(AgentIslandRootLayout.floatingWidth(screens: []) == 381)
+    #expect(AgentIslandRootLayout.floatingWidth(screens: [external, builtIn]) == 381)
   }
 
   @Test func notchedRosterMatchesTheBarWidth() {
@@ -326,13 +362,13 @@ struct AgentIslandIsolationTests {
   @Test func floatingBarKeepsAStableWidthAndCompactsTheAllStateSummary() {
     #expect(!AgentIslandRootLayout.usesCompactFloatingSummary(stateCount: 3))
     #expect(AgentIslandRootLayout.usesCompactFloatingSummary(stateCount: 4))
-    #expect(AgentIslandRootLayout.floatingCompactWidth == 340)
+    #expect(AgentIslandRootLayout.floatingCompactWidth == 381)
     #expect(
       AgentIslandRootLayout.width(
         notchCompactWidth: nil,
         isRosterExpanded: false,
         attentionEntryCount: 0
-      ) == 340)
+      ) == 381)
   }
 
   @Test func coreAnimationRingStopsForReduceMotionAndIdle() {
