@@ -1,0 +1,35 @@
+
+  >_ OpenAI Codex (v0.158.0)
+     <WORKSPACE>
+  permissions: YOLO mode
+
+  Nice place you’ve got here. Very monospace.
+
+
+› Run the shell command `sleep 60` in the foreground, then reply with the single word done.
+
+
+• <REPLY>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+• Working (XXs • esc to interrupt) · 1 background terminal running · /ps to view · /stop to close
+  └ Tip: Use /theme to choose a syntax highlighting theme.
+
+
+› Ask Codex to do anything
+
+  <MODEL>     medium · Context X% used · weekly XX% left · XX.XK used · <WORKSPACE>…
+  ← for agents · ? for shortcuts

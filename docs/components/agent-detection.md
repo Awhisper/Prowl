@@ -55,14 +55,19 @@ at a `~/.grok/` install (so Cursor's own `agent` entrypoint stays Cursor).
    screen-based status; completion while browsing history is not visible to this detector.
    Codex uses exact bottom-of-screen `•`/`◦ Working (... esc to interrupt)` and
    `•`/`◦ Waiting for background terminal (... esc to interrupt)` footer fallbacks.
+   The footer can also sit up to three text rows above the composer, so `└` detail rows
+   such as a background command or a `Tip:` between them do not hide it.
    Braille-only starfield rows around the composer do not count toward that footer window;
    animation alone does not indicate **Working**.
    An empty Codex composer hint and status line remain **Idle** evidence with Astra's
    starfield background, so a workflow can send its first task before any turn has completed.
+   The shortcut hint row that Codex 0.158 shows below the status line
+   (`← for agents · ? for shortcuts`) does not change this.
    Draft text and attachments do not qualify as an empty composer.
    Its confirmation detector requires a numbered selected row such as `› 1. Yes`
    paired with a live bottom footer or an explicit Yes/No choice structure. It also recognizes
-   the current directory-trust, hook-review, and initial sign-in menus as **Blocked** from
+   the directory-trust (including Codex 0.158's `Trust this folder?` prompt), hook-review,
+   and initial sign-in menus as **Blocked** from
    their complete selected-choice and footer structures. Ordinary prompt text and completed
    responses are not confirmation boundaries.
    Pi also treats its bottom `── <braille spinner> Working ──` footer and the adjacent
