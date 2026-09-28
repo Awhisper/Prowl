@@ -6,6 +6,20 @@ nonisolated struct CodexDaemonRollout: Sendable, Equatable {
   let id: String
   let parentID: String?
   var clientIDs: [String]
+  var path = ""
+  /// A fork copies history before its own `thread_settings_applied`; that part is not live.
+  var isForked = false
+  /// Byte offset of the live `task_started` line that precedes each client message id.
+  var turnStartOffsets: [String: UInt64] = [:]
+}
+
+/// The rollouts a pane's Codex TUI currently drives through the daemon (docs-ai 073.002).
+nonisolated struct CodexDaemonBinding: Sendable, Equatable {
+  let rootID: String
+  /// The root thread and every descendant the daemon holds open.
+  let paths: [String]
+  /// Where reading the bound rollout starts: the turn that holds the pane's newest submit.
+  let liveOffsets: [String: UInt64]
 }
 
 /// The submits of the TUI that last started a pane's session log.
@@ -40,6 +54,8 @@ actor CodexDaemonThreadMapper {
     var offset: UInt64
     var pending = Data()
     var headerRead = false
+    var live = true
+    var lastTurnStart: UInt64?
     var rollout: Rollout?
   }
 
@@ -72,22 +88,59 @@ actor CodexDaemonThreadMapper {
     return Self.resolve(threadID: threadID, rollouts: rollouts, logs: sessionLogs())
   }
 
+  /// What the pane's current Codex TUI drives, or nil before its first indexed submit. The
+  /// session log must belong to the TUI process that started at `tuiStartedAt`.
+  func binding(surfaceID: UUID, daemonPID: pid_t, tuiStartedAt: Date) -> CodexDaemonBinding? {
+    let url = CodexTUISessionLog.url(for: surfaceID, in: sessionLogDirectory)
+    guard let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize, size <= sessionLogLimit,
+      let data = try? Data(contentsOf: url),
+      let log = Self.parseSessionLog(data, surfaceID: surfaceID),
+      CodexTUISessionLog.belongs(sessionStartedAt: log.startedAt, toProcessStartedAt: tuiStartedAt),
+      !log.submits.isEmpty,
+      let paths = openFilePaths(daemonPID),
+      let rollouts = refreshRollouts(paths.filter(Self.isRolloutPath))
+    else { return nil }
+    return Self.binding(for: log, rollouts: rollouts)
+  }
+
   // MARK: - Resolution
 
-  static func resolve(threadID: String, rollouts: [Rollout], logs: [SessionLog]) -> CodexThreadPane? {
+  static func binding(for log: SessionLog, rollouts: [Rollout]) -> CodexDaemonBinding? {
     let byID = Dictionary(rollouts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+    let owner = owners(rollouts)
+    guard let submit = log.submits.last(where: { owner[$0.clientID] != nil }),
+      let bound = owner[submit.clientID].flatMap({ byID[$0] })
+    else { return nil }
+    let rootID = root(of: bound.id, in: byID)
+    let family = rollouts.filter { root(of: $0.id, in: byID) == rootID }
+    return CodexDaemonBinding(
+      rootID: rootID,
+      paths: family.map(\.path).sorted(),
+      liveOffsets: bound.turnStartOffsets[submit.clientID].map { [bound.path: $0] } ?? [:]
+    )
+  }
+
+  private static func owners(_ rollouts: [Rollout]) -> [String: String] {
     var owner: [String: String] = [:]
     for rollout in rollouts {
       for clientID in rollout.clientIDs { owner[clientID] = rollout.id }
     }
-    func root(_ id: String) -> String {
-      var current = id
-      var visited: Set<String> = []
-      while let parent = byID[current]?.parentID, visited.insert(current).inserted {
-        current = parent
-      }
-      return current
+    return owner
+  }
+
+  private static func root(of id: String, in byID: [String: Rollout]) -> String {
+    var current = id
+    var visited: Set<String> = []
+    while let parent = byID[current]?.parentID, visited.insert(current).inserted {
+      current = parent
     }
+    return current
+  }
+
+  static func resolve(threadID: String, rollouts: [Rollout], logs: [SessionLog]) -> CodexThreadPane? {
+    let byID = Dictionary(rollouts.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+    let owner = owners(rollouts)
+    func root(_ id: String) -> String { Self.root(of: id, in: byID) }
     let target = root(threadID)
     let bound = logs.compactMap { log -> (log: SessionLog, submittedAt: Date)? in
       guard let submit = log.submits.last(where: { owner[$0.clientID] != nil }),
@@ -182,25 +235,35 @@ actor CodexDaemonThreadMapper {
       } catch {
         return nil
       }
-      Self.consume(&cursor)
+      Self.consume(&cursor, path: path)
       next[path] = cursor
     }
     cursors = next
     return next.values.compactMap(\.rollout)
   }
 
-  private static func consume(_ cursor: inout Cursor) {
+  private static func consume(_ cursor: inout Cursor, path: String) {
+    let base = cursor.offset - UInt64(cursor.pending.count)
     var start = cursor.pending.startIndex
     while let end = cursor.pending[start...].firstIndex(of: 10) {
       let line = cursor.pending[start..<end]
+      let lineOffset = base + UInt64(start - cursor.pending.startIndex)
       start = end + 1
       if !cursor.headerRead {
         cursor.headerRead = true
         cursor.rollout = header(line)
+        cursor.rollout?.path = path
+        cursor.live = cursor.rollout?.isForked != true
         continue
       }
-      if cursor.rollout != nil, let clientID = userMessageClientID(line) {
+      guard let id = cursor.rollout?.id else { continue }
+      if !cursor.live {
+        cursor.live = isLiveBoundary(line, threadID: id)
+      } else if isTaskStarted(line) {
+        cursor.lastTurnStart = lineOffset
+      } else if let clientID = userMessageClientID(line) {
         cursor.rollout?.clientIDs.append(clientID)
+        cursor.rollout?.turnStartOffsets[clientID] = cursor.lastTurnStart
       }
     }
     cursor.pending.removeSubrange(cursor.pending.startIndex..<start)
@@ -214,7 +277,27 @@ actor CodexDaemonThreadMapper {
     else { return nil }
     let source = payload["source"] as? [String: Any]
     let spawn = (source?["subagent"] as? [String: Any])?["thread_spawn"] as? [String: Any]
-    return Rollout(id: id, parentID: spawn?["parent_thread_id"] as? String, clientIDs: [])
+    return Rollout(
+      id: id, parentID: spawn?["parent_thread_id"] as? String, clientIDs: [],
+      isForked: payload["forked_from_id"] is String)
+  }
+
+  private static func eventPayload(_ line: Data, type: String) -> [String: Any]? {
+    guard line.range(of: Data("\"\(type)\"".utf8)) != nil,
+      let record = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+      record["type"] as? String == "event_msg",
+      let payload = record["payload"] as? [String: Any],
+      payload["type"] as? String == type
+    else { return nil }
+    return payload
+  }
+
+  static func isTaskStarted(_ line: Data) -> Bool {
+    eventPayload(line, type: "task_started") != nil
+  }
+
+  static func isLiveBoundary(_ line: Data, threadID: String) -> Bool {
+    eventPayload(line, type: "thread_settings_applied")?["thread_id"] as? String == threadID
   }
 
   static func userMessageClientID(_ line: Data) -> String? {

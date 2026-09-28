@@ -47,8 +47,8 @@ Observed impact for a Codex TUI typed by hand (verified live with Codex 0.158.0)
 
 ### Non-goals
 
-- Log-based working/idle detection for daemon-mode Codex. The screen fallback already
-  covers it (#838). The mapper built here can back that later.
+- Log-based working/idle detection for daemon-mode Codex. (Corrected: delivered as a
+  stacked follow-up that reuses the mapper; see 002.)
 - Fixing the other inherited variables (`PROWL_WORKTREE_PATH`, `SSH_AUTH_SOCK`, …).
 - Forcing `--no-daemon` on user-typed commands.
 
@@ -110,3 +110,5 @@ The spike that validated the session-log mapping lives on branch
 `spike/codex-daemon-log-detection` (`scripts/spikes/codex-daemon-map.py`).
 
 ## Amendments
+
+- Updated 2026-09-29: daemon-mode Codex log detection reuses the thread mapper — see [002-daemon-log-detection.md](002-daemon-log-detection.md)

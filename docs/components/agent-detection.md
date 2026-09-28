@@ -111,6 +111,15 @@ at a `~/.grok/` install (so Cursor's own `agent` entrypoint stays Cursor).
    screen. Attribution is heuristic: switching to an old quiet chat before entering
    a new prompt can temporarily retain the previous log candidate.
 
+   A `codex` typed by hand in Codex 0.157+ attaches to a shared background daemon
+   that owns every session log, so the TUI process holds none. Prowl then reads the
+   daemon's logs for the thread this pane's Codex last submitted to, identified
+   through the pane's Codex session log (see
+   [cli identity](cli.md#identity-which-pane-am-i)), plus that thread's subagents.
+   Until the pane's Codex submits its first message, and for a moment after each
+   new submit, detection falls back to the screen. A Codex launched from an Agent
+   Profile or with `--no-daemon` owns its logs and is read directly.
+
    Claude reads the detected PID's native registry under its configured root
    (`~/.claude/sessions` by default). `busy` and `shell` mean **Working**, including
    assigned child and background shell work; `waiting` means **Blocked**, and `idle`

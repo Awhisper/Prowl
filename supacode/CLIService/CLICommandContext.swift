@@ -76,12 +76,8 @@ nonisolated struct CallerPane: Sendable, Equatable {
   func belongs(to generation: AgentProcessGeneration) -> Bool {
     if processAncestry.contains(generation) { return true }
     guard let codexSessionStartedAt else { return false }
-    let delay = codexSessionStartedAt.timeIntervalSince(generation.startedAt)
-    return delay >= -1 && delay <= Self.codexSessionStartWindow
+    return CodexTUISessionLog.belongs(sessionStartedAt: codexSessionStartedAt, toProcessStartedAt: generation.startedAt)
   }
-
-  /// A TUI writes its session header during startup; a later header belongs to a later TUI.
-  static let codexSessionStartWindow: TimeInterval = 120
 }
 
 /// The caller's ancestry up to, not including, a Codex managed daemon.

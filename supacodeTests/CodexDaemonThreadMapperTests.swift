@@ -162,6 +162,74 @@ struct CodexDaemonThreadMapperTests {
     #expect(await incomplete.pane(threadID: "t2", daemonPID: 1) == nil)
   }
 
+  @Test func bindingCoversTheRootFamilyAndStartsAtTheBoundTurn() {
+    var root = Self.rollout("root", ["a1"])
+    root.path = "/r"
+    root.turnStartOffsets = ["a1": 100]
+    var child = Self.rollout("child", parent: "root", [])
+    child.path = "/c"
+    var other = Self.rollout("other", ["b1"])
+    other.path = "/o"
+    let rollouts = [root, child, other]
+
+    let binding = Mapper.binding(for: Self.log(Self.paneA, [("a1", 1), ("a2-pending", 2)]), rollouts: rollouts)
+
+    #expect(binding == CodexDaemonBinding(rootID: "root", paths: ["/c", "/r"], liveOffsets: ["/r": 100]))
+    #expect(Mapper.binding(for: Self.log(Self.paneA, [("pending", 1)]), rollouts: rollouts) == nil)
+  }
+
+  @Test func indexRecordsTurnStartsAndSkipsInheritedHistory() async throws {
+    let directory = FileManager.default.temporaryDirectory.appending(path: "codex-bind-\(UUID().uuidString)")
+    let logs = directory.appending(path: "logs")
+    try FileManager.default.createDirectory(at: logs, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: directory) }
+    func event(_ type: String, _ extra: String = "") -> String {
+      #"{"type":"event_msg","payload":{"type":""# + type + #"""# + extra + "}}"
+    }
+    func user(_ id: String) -> String {
+      event("item_completed", #","item":{"type":"UserMessage","client_id":""# + id + #""}"#)
+    }
+    let main = directory.appending(path: "rollout-main.jsonl")
+    let mainHead = [
+      #"{"type":"session_meta","payload":{"id":"main","source":"vscode"}}"#,
+      event("task_started", #","turn_id":"1""#), user("a1"), event("task_complete", #","turn_id":"1""#), "",
+    ].joined(separator: "\n")
+    let mainTail = [event("task_started", #","turn_id":"2""#), user("a2"), ""].joined(separator: "\n")
+    try Data((mainHead + mainTail).utf8).write(to: main)
+    let fork = directory.appending(path: "rollout-fork.jsonl")
+    let forkHead = [
+      #"{"type":"session_meta","payload":{"id":"fork","forked_from_id":"main","source":"vscode"}}"#,
+      event("task_started", #","turn_id":"old""#), user("copied"),
+      event("thread_settings_applied", #","thread_id":"fork""#), "",
+    ].joined(separator: "\n")
+    let forkTail = [event("task_started", #","turn_id":"3""#), user("f1"), ""].joined(separator: "\n")
+    try Data((forkHead + forkTail).utf8).write(to: fork)
+    let tuiStart = Date(timeIntervalSince1970: 1_790_605_490)
+    let start = #"{"ts":"2026-09-28T14:25:00.000Z","kind":"session_start"}"#
+    let submit =
+      #"{"ts":"2026-09-28T14:25:05.000Z","kind":"op","payload":{"UserTurn":{"client_user_message_id":"f1"}}}"#
+    try Data([start, submit, ""].joined(separator: "\n").utf8).write(
+      to: CodexTUISessionLog.url(for: Self.paneA, in: logs))
+    let open = [main, fork].map { $0.path(percentEncoded: false) }
+    let mapper = CodexDaemonThreadMapper(sessionLogDirectory: logs, openFilePaths: { _ in open })
+
+    let binding = await mapper.binding(surfaceID: Self.paneA, daemonPID: 1, tuiStartedAt: tuiStart)
+    #expect(binding?.rootID == "fork")
+    #expect(binding?.paths == [open[1]])
+    #expect(binding?.liveOffsets == [open[1]: UInt64(forkHead.utf8.count)])
+    #expect(await mapper.pane(threadID: "main", daemonPID: 1) == nil)
+    let late = await mapper.binding(
+      surfaceID: Self.paneA, daemonPID: 1, tuiStartedAt: tuiStart.addingTimeInterval(-3_600))
+    #expect(late == nil)
+
+    let submitB = submit.replacing("f1", with: "a2")
+    try Data([start, submitB, ""].joined(separator: "\n").utf8).write(
+      to: CodexTUISessionLog.url(for: Self.paneB, in: logs))
+    let mainBinding = await mapper.binding(surfaceID: Self.paneB, daemonPID: 1, tuiStartedAt: tuiStart)
+    #expect(mainBinding?.rootID == "main")
+    #expect(mainBinding?.liveOffsets == [open[0]: UInt64(mainHead.utf8.count)])
+  }
+
   @Test func preparingTheLogDirectoryRemovesOnlyStaleLogs() throws {
     let directory = FileManager.default.temporaryDirectory.appending(path: "codex-logs-\(UUID().uuidString)")
     defer { try? FileManager.default.removeItem(at: directory) }
