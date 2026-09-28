@@ -30,13 +30,18 @@ NEEDED=${PROWL_SPIKE_CONSECUTIVE:-2}
 # bounds how long the script waits; it does not decide correctness.
 CLI_TIMEOUT=$((SAMPLE_SECONDS + 5))
 
-# Runs a prowl query into a file and marks when the answer arrived. The marker is a
-# file created by a shell builtin; its modification time is the kernel's clock, so a
-# delayed shell can only make the answer look later, never earlier.
-# perl's alarm survives the exec.
+# sample(1) stamps its Date/Time header when sampling begins, 28-36 ms after launch in
+# ten measured runs on a loaded host. The CLI queries wait this long after the launch
+# so their answers normally land inside the sampled window rather than before it.
+QUERY_OFFSET=0.25
+
+# Runs a prowl query into a file, QUERY_OFFSET after the sample launch, and marks when
+# the answer arrived. The marker is a file created by a shell builtin; its modification
+# time is the kernel's clock. perl's alarm survives the exec.
 query_cli() {
   local out=$1
   shift
+  /bin/sleep "$QUERY_OFFSET"
   # The group's stderr also takes bash's own "Alarm clock" notice for a timed-out call.
   { /usr/bin/perl -e 'alarm shift @ARGV; exec @ARGV or exit 127' "$CLI_TIMEOUT" prowl "$@" > "$out"; } \
     2>/dev/null || printf '{"ok":false,"reason":"no answer within %ss"}\n' "$CLI_TIMEOUT" > "$out"
@@ -54,16 +59,18 @@ sample_started_at() {
     }' "$1" 2>/dev/null || true
 }
 
-# Keeps a query's answer only if it arrived between the sample's launch and the end of
-# its sampling, and otherwise replaces it with {"ok":false} and the reason.
+# Keeps a query's answer only if it arrived while sample(1) was sampling, and otherwise
+# replaces it with {"ok":false} and the reason.
 keep_if_inside_sample() {
   local out=$1
   local answered reason=
   answered=$(/usr/bin/stat -f %Fm "$out.answered")
-  if [ -z "$WINDOW_END" ]; then
+  if [ -z "$WINDOW_START" ]; then
     reason="the sample recorded no start time"
-  elif ! awk -v a="$answered" -v s="$WINDOW_START" -v e="$WINDOW_END" 'BEGIN { exit !(a >= s && a <= e) }'; then
-    reason="answered outside the sample window"
+  elif awk -v a="$answered" -v s="$WINDOW_START" 'BEGIN { exit !(a < s) }'; then
+    reason="answered before sampling started"
+  elif awk -v a="$answered" -v e="$WINDOW_END" 'BEGIN { exit !(a > e) }'; then
+    reason="answered after sampling ended"
   fi
   if [ -n "$reason" ] && jq -e '.ok' < "$out" > /dev/null 2>&1; then
     printf '{"ok":false,"reason":"%s"}\n' "$reason" > "$out"
@@ -184,7 +191,6 @@ for _ in $(seq 1 "$ITERATIONS"); do
   # Keep the header: it carries the window size every later attribution needs.
   sample "$PID" "$SAMPLE_SECONDS" -f "$OUT/sample.txt" >/dev/null 2>&1 &
   SAMPLE_PID=$!
-  : > "$OUT/.sample-launched"
   # The CLI queries run side by side while the sample runs. Whether an answer describes
   # the sampled window is decided after the sample ends, from the sample's own clock.
   query_cli "$OUT/agents.json" agents --json &
@@ -209,17 +215,15 @@ for _ in $(seq 1 "$ITERATIONS"); do
 
   wait "$SAMPLE_PID"
   wait "$AGENTS_PID" "$PANES_PID"
-  # The window opens at the launch and closes when sampling ends: sample(1)'s own start
-  # plus its duration. Neither bound depends on when this shell got to run.
-  WINDOW_START=$(/usr/bin/stat -f %Fm "$OUT/.sample-launched")
-  SAMPLING_STARTED=$(sample_started_at "$OUT/sample.txt")
+  # The window is sample(1)'s own: the Date/Time it stamps when sampling begins, which
+  # carries milliseconds, plus the duration. Neither bound depends on this shell.
+  WINDOW_START=$(sample_started_at "$OUT/sample.txt")
   WINDOW_END=
-  if [ -n "$SAMPLING_STARTED" ]; then
-    WINDOW_END=$(awk -v s="$SAMPLING_STARTED" -v d="$SAMPLE_SECONDS" 'BEGIN { printf "%.3f", s + d }')
+  if [ -n "$WINDOW_START" ]; then
+    WINDOW_END=$(awk -v s="$WINDOW_START" -v d="$SAMPLE_SECONDS" 'BEGIN { printf "%.3f", s + d }')
   fi
   keep_if_inside_sample "$OUT/agents.json"
   keep_if_inside_sample "$OUT/panes.json"
-  rm -f "$OUT/.sample-launched"
 
   jq -r 'if .ok then "agent mix: total=\(.data.agents|length)   "
       + (.data.agents|group_by(.status)|map("\(.[0].status)=\(length)")|join("  "))

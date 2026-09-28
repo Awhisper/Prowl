@@ -171,16 +171,18 @@ spike_dir() {
   find "$1/spikes" -mindepth 1 -maxdepth 1 -type d
 }
 
-# The saved pane snapshot must have been answered before the fake sample stopped
-# sampling. The window opens when sample launches and the queries only start after
-# that, so the end is the bound a snapshot can cross.
+# The saved pane snapshot must have been answered while the fake sample was sampling.
+# sample-started holds the same value as the Date/Time header the fake writes, so the
+# start bound is the one the capture script reads.
 assert_snapshot_inside_sample() {
   local times=$1
-  local ended answered
+  local started ended answered
+  started=$(cat "$times/sample-started")
   ended=$(cat "$times/sample-ended")
   answered=$(cat "$times/list-answered")
-  awk -v end="$ended" -v answered="$answered" 'BEGIN { exit !(answered <= end) }' || {
-    echo "pane snapshot answered at $answered, after the sample ended at $ended" >&2
+  awk -v start="$started" -v end="$ended" -v answered="$answered" \
+    'BEGIN { exit !(answered >= start && answered <= end) }' || {
+    echo "pane snapshot answered at $answered, outside the sample from $started to $ended" >&2
     exit 1
   }
 }
@@ -237,10 +239,29 @@ if grep -Fq '"ok":true' "$LATE_LIST_DIR/panes.json"; then
   assert_snapshot_inside_sample "$LATE_TIMES"
 fi
 grep -Fq '"ok":false' "$LATE_LIST_DIR/panes.json"
-grep -Fq 'pane mix: CLI unavailable (answered outside the sample window)' <<< "$LATE_LIST_OUTPUT"
+grep -Fq 'pane mix: CLI unavailable (answered after sampling ended)' <<< "$LATE_LIST_OUTPUT"
 
-# sample(1) takes time to attach before it samples. A snapshot answered late in the
-# sampling, but still inside it, is kept.
+# sample(1) takes time to attach before it samples. Here the fake takes 0.5 s, longer
+# than the query offset, so a prowl list that answers at once does so before sampling
+# begins. That snapshot is refused.
+EARLY_TIMES="$TEST_ROOT/early-times"
+mkdir -p "$EARLY_TIMES"
+EARLY_OUTPUT=$(run_spike "$TEST_ROOT/early-measurements" \
+  PROWL_FAKE_SAMPLE_ATTACH=0.5 PROWL_FAKE_TIMES_DIR="$EARLY_TIMES")
+EARLY_DIR=$(spike_dir "$TEST_ROOT/early-measurements")
+awk -v start="$(cat "$EARLY_TIMES/sample-started")" -v answered="$(cat "$EARLY_TIMES/list-answered")" \
+  'BEGIN { exit !(answered < start) }' || {
+  echo "the early prowl list answered after sampling began; the case tests nothing" >&2
+  exit 1
+}
+grep -Fq 'answered before sampling started' "$EARLY_DIR/panes.json" || {
+  echo "pane snapshot answered before sampling started was kept: $(tr -d '\n' < "$EARLY_DIR/panes.json" | cut -c1-60)" >&2
+  exit 1
+}
+grep -Fq 'pane mix: CLI unavailable (answered before sampling started)' <<< "$EARLY_OUTPUT"
+
+# With the same attach delay, a snapshot answered late in the sampling, but still
+# inside it, is kept.
 ATTACH_TIMES="$TEST_ROOT/attach-times"
 mkdir -p "$ATTACH_TIMES"
 ATTACH_OUTPUT=$(run_spike "$TEST_ROOT/attach-measurements" \

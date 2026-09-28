@@ -24,9 +24,10 @@ bounded canonical revalidation, and obsolete unmerged branch hashes.
   explicit unavailable payload when the CLI cannot answer.
 - Both profilers save the complete pane snapshot and report worktree, tab, selected-tab, and
   visible-pane counts. The CLI derives visibility from the surface viewport and window state.
-  The spike capture launches `sample` before anything else and keeps a CLI answer only if it
-  arrived before sampling ended, by the start time in the sample's own header; otherwise it
-  records `{"ok":false}` with the reason.
+  The spike capture launches `sample` before anything else and starts the CLI queries 0.25 s
+  later. It keeps an answer only if it arrived while sampling ran, from the `Date/Time` in the
+  sample's own header to that time plus the duration; otherwise it records `{"ok":false}` with
+  the reason.
 - The steady-state parser reports AppKit transaction flushes, SwiftUI graph flushes, and Ghostty
   glyph, row, and hash work as separate symbols.
 - The detailed performance record is reconciled with #653–#657 and #662–#665, and cross-links this
