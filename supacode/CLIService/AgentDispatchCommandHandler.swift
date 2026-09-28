@@ -266,7 +266,7 @@ final class AgentDispatchCommandHandler: CommandHandler {
 
 @MainActor
 final class AgentDispatchCompleteCommandHandler: CommandHandler {
-  typealias ResolveCaller = @MainActor (pid_t) -> CallerPane?
+  typealias ResolveCaller = @MainActor (CLICommandContext) -> CallerPane?
   /// Completes the caller pane's current pending dispatch; the pane, not a public id, is the
   /// record's address.
   typealias Complete =
@@ -308,7 +308,7 @@ final class AgentDispatchCompleteCommandHandler: CommandHandler {
     if let message = input.validationErrorMessage {
       return failure(code: CLIErrorCode.invalidArgument, message: message)
     }
-    guard let processID = context.callerProcessID, let caller = resolveCaller(processID) else {
+    guard context.callerProcessID != nil, let caller = resolveCaller(context) else {
       return failure(
         code: CLIErrorCode.dispatchContextRequired,
         message: "Run dispatch completion from the Prowl pane that owns this dispatch."

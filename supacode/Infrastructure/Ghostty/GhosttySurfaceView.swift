@@ -323,6 +323,8 @@ final class GhosttySurfaceView: NSView, Identifiable {
     }
     var launchEnvironment = environment
     launchEnvironment[Self.paneIdentityEnvironmentKey] = id.uuidString
+    // Codex's shared daemon hides which pane drives a thread; this log restores it (docs-ai 073).
+    launchEnvironment.merge(CodexTUISessionLog.environment(for: id)) { explicit, _ in explicit }
     self.launchEnvironment = launchEnvironment
     let sortedEnv = launchEnvironment.sorted { $0.key < $1.key }
     var allocatedStrings: [UnsafeMutablePointer<CChar>] = []
@@ -443,6 +445,7 @@ final class GhosttySurfaceView: NSView, Identifiable {
         self.surfaceRef = nil
       }
       ghostty_surface_free(surface)
+      CodexTUISessionLog.removeLog(for: id)
       self.surface = nil
       bridge.surface = nil
       occlusionState.reset()

@@ -59,18 +59,31 @@ struct ListRuntimeSnapshot: Sendable {
 
 final class ListCommandHandler: CommandHandler {
   typealias SnapshotProvider = @MainActor () throws -> ListRuntimeSnapshot
+  typealias ResolveCaller = @MainActor (CLICommandContext) -> CallerPane?
 
   private let snapshotProvider: SnapshotProvider
+  private let resolveCaller: ResolveCaller
 
-  init(snapshotProvider: @escaping SnapshotProvider) {
+  init(
+    resolveCaller: @escaping ResolveCaller = { _ in nil },
+    snapshotProvider: @escaping SnapshotProvider
+  ) {
+    self.resolveCaller = resolveCaller
     self.snapshotProvider = snapshotProvider
   }
 
-  // swiftlint:disable:next async_without_await
   func handle(envelope: CommandEnvelope) async -> CommandResponse {
+    await handle(envelope: envelope, context: CLICommandContext())
+  }
+
+  // swiftlint:disable:next async_without_await
+  func handle(envelope: CommandEnvelope, context: CLICommandContext) async -> CommandResponse {
     do {
       let snapshot = try snapshotProvider()
-      let payload = makePayload(from: snapshot, includeHandles: envelope.output == .text)
+      let caller = resolveCaller(context).map {
+        ListCommandCaller(paneID: $0.surfaceID.uuidString, worktreeID: $0.worktreeID)
+      }
+      let payload = makePayload(from: snapshot, includeHandles: envelope.output == .text, caller: caller)
       return try CommandResponse(
         ok: true,
         command: "list",
@@ -92,7 +105,8 @@ final class ListCommandHandler: CommandHandler {
 
   private func makePayload(
     from snapshot: ListRuntimeSnapshot,
-    includeHandles: Bool
+    includeHandles: Bool,
+    caller: ListCommandCaller?
   ) -> ListCommandPayload {
     var items: [ListCommandItem] = []
     var didAssignFocusedPane = false
@@ -140,6 +154,7 @@ final class ListCommandHandler: CommandHandler {
       }
     }
 
-    return ListCommandPayload(count: items.count, items: items)
+    let listedCaller = caller.flatMap { caller in items.contains { $0.pane.id == caller.pane.id } ? caller : nil }
+    return ListCommandPayload(count: items.count, items: items, caller: listedCaller)
   }
 }

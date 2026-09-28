@@ -236,20 +236,37 @@ final class CLISocketServer {
           continue
         }
         let callerProcessID = peerProcessID(clientFD)
+        let walk = callerProcessID.map { CallerPaneResolver.processWalk(forCallerProcess: $0) }
         let context = CLICommandContext(
           callerProcessID: callerProcessID,
-          callerProcessAncestry: callerProcessID.map {
-            CallerPaneResolver.processAncestry(forCallerProcess: $0)
-          } ?? []
+          callerProcessAncestry: walk?.ancestry ?? [],
+          codexDaemonCaller: walk?.codexDaemon.map { daemon in
+            CodexDaemonCaller(
+              daemon: daemon,
+              threadID: callerProcessID.flatMap {
+                ProcessDetection.processEnvironmentValue(pid: $0, name: "CODEX_THREAD_ID")
+              }
+            )
+          }
         )
         onClientAccepted?()
-        Task { @MainActor in
+        Task {
+          let context = await Self.resolvingCodexThreadPane(context)
           await server.handleClient(clientFD: clientFD, context: context)
         }
       } else {
         Darwin.close(clientFD)
       }
     }
+  }
+
+  /// Runs the rollout scan off the main actor; only a Codex daemon caller pays for it.
+  nonisolated private static func resolvingCodexThreadPane(_ context: CLICommandContext) async -> CLICommandContext {
+    guard var codex = context.codexDaemonCaller, let threadID = codex.threadID else { return context }
+    codex.pane = await CodexDaemonThreadMapper.shared.pane(threadID: threadID, daemonPID: codex.daemon.processID)
+    var context = context
+    context.codexDaemonCaller = codex
+    return context
   }
 
   private func handleClient(clientFD: Int32, context: CLICommandContext) async {

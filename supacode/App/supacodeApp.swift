@@ -684,12 +684,17 @@ struct SupacodeApp: App {
     agentSignalCallerResolver: AgentSignalCommandHandler.ResolveCaller? = nil
   ) -> CLICommandRouter {
 
-    let listHandler = ListCommandHandler {
-      ListRuntimeSnapshotBuilder.makeSnapshot(
-        repositoriesState: appStore.state.repositories,
-        terminalManager: terminalManager
-      )
-    }
+    let listHandler = ListCommandHandler(
+      resolveCaller: { context in
+        CallerPaneResolver.pane(for: context, paneByShellPID: terminalManager.paneByShellPID())
+      },
+      snapshotProvider: {
+        ListRuntimeSnapshotBuilder.makeSnapshot(
+          repositoriesState: appStore.state.repositories,
+          terminalManager: terminalManager
+        )
+      }
+    )
     let profilesHandler = ProfilesCommandHandler {
       @Shared(.userGlobalSettings) var settings
       @Shared(.agentRuntimeAvailabilityProbeResults) var probeResults
@@ -726,11 +731,8 @@ struct SupacodeApp: App {
       )
     }
     let resolveAgentSignalCaller: AgentSignalCommandHandler.ResolveCaller =
-      agentSignalCallerResolver ?? { callerProcessID in
-        CallerPaneResolver.pane(
-          forCallerProcess: callerProcessID,
-          paneByShellPID: terminalManager.paneByShellPID()
-        )
+      agentSignalCallerResolver ?? { context in
+        CallerPaneResolver.pane(for: context, paneByShellPID: terminalManager.paneByShellPID())
       }
     let agentSignalHandler = AgentSignalCommandHandler(
       resolveCaller: resolveAgentSignalCaller,
@@ -739,16 +741,7 @@ struct SupacodeApp: App {
       }
     )
     let agentHookHandler = AgentNativeHookCommandHandler(
-      resolveCaller: { context in
-        if !context.callerProcessAncestry.isEmpty {
-          return CallerPaneResolver.pane(
-            forCallerProcessAncestry: context.callerProcessAncestry,
-            paneByShellPID: terminalManager.paneByShellPID()
-          )
-        }
-        guard let processID = context.callerProcessID else { return nil }
-        return resolveAgentSignalCaller(processID)
-      },
+      resolveCaller: resolveAgentSignalCaller,
       recordHook: { caller, input in
         terminalManager.recordAgentNativeHook(input, caller: caller)
       }
@@ -1253,6 +1246,7 @@ struct SupacodeApp: App {
       onStatusChanged: { CLIServiceStatusPublisher.shared.publish($0) }
     )
     let logger = SupaLogger("CLIService")
+    Task.detached(priority: .utility) { CodexTUISessionLog.prepareDirectory() }
     do {
       try cliServer.start()
       logger.info("CLI socket server started at \(ProwlSocket.defaultPath)")

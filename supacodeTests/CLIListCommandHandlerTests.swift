@@ -163,4 +163,42 @@ struct CLIListCommandHandlerTests {
     #expect(response.schemaVersion == "prowl.cli.list.v1")
     #expect(response.error?.code == CLIErrorCode.listFailed)
   }
+
+  @Test func reportsTheServerResolvedCallerOnlyWhenItIsListed() async throws {
+    let paneID = UUID()
+    let snapshot = ListRuntimeSnapshot(
+      worktrees: [
+        .init(
+          id: "/repo", name: "repo", path: "/repo", rootPath: "/repo", kind: .git, taskStatus: nil,
+          tabs: [
+            .init(
+              id: UUID(), handle: 1, title: "t", selected: true, focusedPaneID: paneID,
+              panes: [.init(id: paneID, handle: 2, title: "p", cwd: "/repo", agent: "codex")])
+          ])
+      ],
+      focusedWorktreeID: "/repo"
+    )
+    let envelope = CommandEnvelope(output: .json, command: .list(ListInput()))
+    let listed = ListCommandHandler(
+      resolveCaller: { context in
+        context.callerProcessID == 7 ? CallerPane(worktreeID: "/repo", surfaceID: paneID) : nil
+      },
+      snapshotProvider: { snapshot }
+    )
+    let unlisted = ListCommandHandler(
+      resolveCaller: { _ in CallerPane(worktreeID: "/repo", surfaceID: UUID()) },
+      snapshotProvider: { snapshot }
+    )
+
+    let caller = try #require(
+      try await listed.handle(envelope: envelope, context: CLICommandContext(callerProcessID: 7))
+        .data?.decode(as: ListCommandPayload.self)
+    ).caller
+    #expect(caller == ListCommandCaller(paneID: paneID.uuidString, worktreeID: "/repo"))
+    #expect(
+      try await unlisted.handle(envelope: envelope, context: CLICommandContext(callerProcessID: 7))
+        .data?.decode(as: ListCommandPayload.self).caller == nil)
+    let contextless = try #require(await listed.handle(envelope: envelope).data)
+    #expect(try contextless.decode(as: ListCommandPayload.self).caller == nil)
+  }
 }
