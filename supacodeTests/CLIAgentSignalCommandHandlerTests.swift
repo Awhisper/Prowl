@@ -10,8 +10,8 @@ struct CLIAgentSignalCommandHandlerTests {
     let pane = CallerPane(worktreeID: "/tmp/repo", surfaceID: UUID())
     var recorded: (CallerPane, AgentSignal)?
     let handler = AgentSignalCommandHandler(
-      resolveCaller: { processID in
-        #expect(processID == 42)
+      resolveCaller: { context in
+        #expect(context.callerProcessID == 42)
         return pane
       },
       recordSignal: { caller, signal in

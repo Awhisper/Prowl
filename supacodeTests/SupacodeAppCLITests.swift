@@ -58,8 +58,8 @@ struct SupacodeAppCLITests {
     let router = SupacodeApp.makeCLICommandRouter(
       appStore: store,
       terminalManager: terminalManager,
-      agentSignalCallerResolver: { processID in
-        #expect(processID == 42)
+      agentSignalCallerResolver: { context in
+        #expect(context.callerProcessID == 42)
         return CallerPane(worktreeID: worktree.id, surfaceID: surfaceID)
       }
     )

@@ -198,8 +198,8 @@ struct CLISocketServerTests {
     let pane = CallerPane(worktreeID: "wt", surfaceID: UUID())
     var recordedSignal: AgentSignal?
     let handler = AgentSignalCommandHandler(
-      resolveCaller: { processID in
-        #expect(processID == getpid())
+      resolveCaller: { context in
+        #expect(context.callerProcessID == getpid())
         return pane
       },
       recordSignal: { caller, signal in
