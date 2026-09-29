@@ -119,6 +119,9 @@ at a `~/.grok/` install (so Cursor's own `agent` entrypoint stays Cursor).
    Until the pane's Codex submits its first message, and for a moment after each
    new submit, detection falls back to the screen. A Codex launched from an Agent
    Profile or with `--no-daemon` owns its logs and is read directly.
+   If a previously established daemon binding becomes unavailable, detection falls
+   back to the screen but retains its log cursors. When the binding returns, it
+   consumes pending events without replaying earlier turn starts.
 
    Claude reads the detected PID's native registry under its configured root
    (`~/.claude/sessions` by default). `busy` and `shell` mean **Working**, including

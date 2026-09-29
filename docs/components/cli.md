@@ -132,6 +132,8 @@ the submitted prompts there (mode 0600); Prowl deletes the file once the pane's 
 longer be undone. A pane whose Codex has not submitted anything yet, or whose shell
 overrides those variables, cannot be mapped, and caller-scoped commands fail with
 `SOURCE_REQUIRED`.
+Session logs larger than 64 MiB are not mapped. Restarting Codex in the pane resets its
+session log; its first indexed submit can establish the mapping again.
 Codex launched from an Agent Profile, or with `--no-daemon`, runs commands inside the pane
 and is not affected.
 

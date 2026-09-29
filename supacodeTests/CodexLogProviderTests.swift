@@ -287,6 +287,35 @@ struct CodexLogProviderTests {
     #expect(requested.withLock { $0 } == [configRoot as URL?])
   }
 
+  @Test func missingDaemonBindingSuspendsWithoutDiscardingProgress() async throws {
+    let directory = try fixture()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let path = directory.appending(path: "rollout-daemon.jsonl")
+    let prefix = header("root")
+    try (prefix + start("t1")).write(to: path, atomically: false, encoding: .utf8)
+    let started = try #require(ProcessDetection.processStartDate(pid: getpid()))
+    let process = AgentProcessGeneration(pid: getpid(), startedAt: started)
+    let available = Mutex(true)
+    let provider = CodexLogProvider(
+      startedAt: .distantFuture,
+      daemonBinding: { _, _ in
+        guard available.withLock({ $0 }) else { return nil }
+        return CodexDaemonBinding(
+          rootID: "root", paths: [path.path], liveOffsets: [path.path: UInt64(prefix.utf8.count)])
+      })
+
+    #expect(startedTurns(await provider.sample(process: process, configRoot: nil)) == ["t1"])
+    available.withLock { $0 = false }
+    let missing = await provider.sample(process: process, configRoot: nil)
+    if case .suspended = missing.first {} else { Issue.record("Missing binding must suspend") }
+    try append(complete("t1"), to: path)
+    available.withLock { $0 = true }
+    let recovered = await provider.sample(process: process, configRoot: nil)
+    #expect(startedTurns(recovered).isEmpty)
+    if case .turnEnded("root", "t1") = recovered.last {} else { Issue.record("Completion was lost") }
+    #expect(await provider.metadataReadCount == 1)
+  }
+
   @Test func managedDaemonPIDRequiresALiveDaemonProcess() throws {
     let home = try fixture()
     defer { try? FileManager.default.removeItem(at: home) }

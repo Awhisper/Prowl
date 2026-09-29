@@ -57,10 +57,16 @@ actor CodexLogProvider {
       .compactMap { parse($0)?.transcriptPath }
     var liveOffsets: [URL: UInt64] = [:]
     // An embedded TUI owns its rollouts. A TUI that owns none may drive daemon threads.
-    if complete, paths.isEmpty, let daemonBinding, let binding = await daemonBinding(process, configRoot) {
-      paths = binding.paths.map { URL(filePath: $0, directoryHint: .notDirectory) }
-      for (path, offset) in binding.liveOffsets {
-        liveOffsets[URL(filePath: path, directoryHint: .notDirectory)] = offset
+    if complete, paths.isEmpty, let daemonBinding {
+      if let binding = await daemonBinding(process, configRoot) {
+        paths = binding.paths.map { URL(filePath: $0, directoryHint: .notDirectory) }
+        for (path, offset) in binding.liveOffsets {
+          liveOffsets[URL(filePath: path, directoryHint: .notDirectory)] = offset
+        }
+      } else if !cursors.isEmpty {
+        // A failed lookup does not prove that previously bound work disappeared.
+        // Suspend authority and keep the cursors until a complete binding returns.
+        complete = false
       }
     }
     let events = sample(paths: paths, inventoryComplete: complete, liveOffsets: liveOffsets)
