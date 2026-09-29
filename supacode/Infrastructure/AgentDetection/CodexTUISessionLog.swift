@@ -14,6 +14,16 @@ nonisolated enum CodexTUISessionLog {
   /// Debug and Release share the directory, so launch only removes stale files.
   static let staleAge: TimeInterval = 7 * 24 * 60 * 60
 
+  /// A TUI writes its session header during startup; a later header belongs to a later TUI.
+  static let processStartWindow: TimeInterval = 120
+
+  /// Whether a log whose header was written at `sessionStartedAt` came from the process that
+  /// started at `processStartedAt`. Each launch truncates the log, so a stale log fails this.
+  static func belongs(sessionStartedAt: Date, toProcessStartedAt processStartedAt: Date) -> Bool {
+    let delay = sessionStartedAt.timeIntervalSince(processStartedAt)
+    return delay >= -1 && delay <= processStartWindow
+  }
+
   static func url(for surfaceID: UUID, in directory: URL = SupacodePaths.codexTUISessionLogDirectory) -> URL {
     directory.appending(path: "\(surfaceID.uuidString).\(fileExtension)", directoryHint: .notDirectory)
   }
