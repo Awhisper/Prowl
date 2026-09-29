@@ -388,6 +388,10 @@ final class CanvasLayoutStore {
     initiallyLoadedCardKeys = Set(stored.cardLayouts.keys)
   }
 
+  // No actor-bound cleanup is needed. Avoid inferred isolated deinit, which can
+  // hit the TaskLocal invalid-free bug in older system Swift runtimes (swiftlang/swift#85204).
+  nonisolated deinit {}
+
   func shouldAutoArrangeOnInitialEntry(for cardKeys: [String]) -> Bool {
     guard !cardKeys.isEmpty else { return false }
     return !cardKeys.contains { initiallyLoadedCardKeys.contains($0) }
