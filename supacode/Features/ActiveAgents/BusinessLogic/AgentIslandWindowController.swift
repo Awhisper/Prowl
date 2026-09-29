@@ -190,6 +190,10 @@ final class AgentIslandWindowController {
     if presentation.notchSize != notchSize {
       presentation.notchSize = notchSize
     }
+    let floatingWidth = AgentIslandRootLayout.floatingWidth(screens: displayCatalog.screens)
+    if presentation.floatingCompactWidth != floatingWidth {
+      presentation.floatingCompactWidth = floatingWidth
+    }
     let floatingMenuBarHeight = screen.hasNotch ? nil : screen.menuBarHeight
     if presentation.floatingMenuBarHeight != floatingMenuBarHeight {
       presentation.floatingMenuBarHeight = floatingMenuBarHeight

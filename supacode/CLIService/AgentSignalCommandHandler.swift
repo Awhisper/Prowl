@@ -9,7 +9,7 @@ nonisolated enum AgentSignalRecordOutcome: Equatable, Sendable {
 
 @MainActor
 final class AgentSignalCommandHandler: CommandHandler {
-  typealias ResolveCaller = @MainActor (pid_t) -> CallerPane?
+  typealias ResolveCaller = @MainActor (CLICommandContext) -> CallerPane?
   typealias RecordSignal = @MainActor (CallerPane, AgentSignal) -> AgentSignalRecordOutcome
 
   private let resolveCaller: ResolveCaller
@@ -45,9 +45,7 @@ final class AgentSignalCommandHandler: CommandHandler {
     if let validationMessage = input.validationErrorMessage {
       return failure(code: CLIErrorCode.invalidArgument, message: validationMessage)
     }
-    guard let processID = context.callerProcessID,
-      let caller = resolveCaller(processID)
-    else {
+    guard context.callerProcessID != nil, let caller = resolveCaller(context) else {
       return failure(
         code: CLIErrorCode.sourceRequired,
         message: "Run 'prowl agents signal' from inside the Prowl pane that is reporting the event."

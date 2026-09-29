@@ -20,7 +20,14 @@ final class AgentDetectionCoordinator {
   private var interactionRevision: UInt64 = 0
   private var now: TimeInterval { time() }
 
-  init(sample: Sample? = nil, time: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
+  private let surfaceID: UUID?
+
+  init(
+    surfaceID: UUID? = nil,
+    sample: Sample? = nil,
+    time: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
+  ) {
+    self.surfaceID = surfaceID
     sampleOverride = sample
     self.time = time
   }
@@ -82,7 +89,7 @@ final class AgentDetectionCoordinator {
       self.agent = agent
       self.process = process
       self.configRoot = configRoot
-      if agent == .codex, process != nil { logProvider = CodexLogProvider() }
+      if agent == .codex, process != nil { logProvider = CodexLogProvider(surfaceID: surfaceID) }
       if agent == .claude, process != nil { nativeProvider = ClaudeRuntimeProvider() }
     }
     let expectedRevision = revision

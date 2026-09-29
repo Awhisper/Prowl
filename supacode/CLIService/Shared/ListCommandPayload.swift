@@ -3,10 +3,33 @@ import Foundation
 public struct ListCommandPayload: Codable, Equatable {
   public let count: Int
   public let items: [ListCommandItem]
+  /// The pane the server resolved for the calling process; absent outside a pane.
+  public let caller: ListCommandCaller?
 
-  public init(count: Int, items: [ListCommandItem]) {
+  public init(count: Int, items: [ListCommandItem], caller: ListCommandCaller? = nil) {
     self.count = count
     self.items = items
+    self.caller = caller
+  }
+}
+
+/// Server-resolved identity of the `prowl` caller. Unlike an inherited `PROWL_PANE_ID`, it
+/// stays correct for commands that Codex's shared daemon runs (docs-ai 073).
+public struct ListCommandCaller: Codable, Equatable {
+  public struct Reference: Codable, Equatable {
+    public let id: String
+
+    public init(id: String) {
+      self.id = id
+    }
+  }
+
+  public let pane: Reference
+  public let worktree: Reference
+
+  public init(paneID: String, worktreeID: String) {
+    self.pane = Reference(id: paneID)
+    self.worktree = Reference(id: worktreeID)
   }
 }
 

@@ -60,19 +60,12 @@ enum CodexScreenProfile {
   /// Only the live bottom composer, followed by Codex's status line, is evidence.
   /// Historical prompts and arbitrary footer text must not authorize delivery.
   nonisolated static func composerIsEmpty(in snapshot: AgentScreenSnapshot) -> Bool {
-    // Astra paints braille stars into blank composer cells, including after the prompt marker.
-    // Keep their cell positions so removing the background cannot join separate draft words.
-    let lines = snapshot.lines.map { line in
-      String(
-        String.UnicodeScalarView(
-          line.unicodeScalars.map { scalar in
-            (0x2800...0x28FF).contains(scalar.value) ? Unicode.Scalar(" ") : scalar
-          })
-      ).trimmingCharacters(in: .whitespaces)
-    }
+    let lines = snapshot.lines.map { codexLineWithoutStarfield($0).trimmingCharacters(in: .whitespaces) }
     guard let prompt = lines.lastIndex(where: isCodexPromptLine) else { return false }
     let suffix = lines.dropFirst(prompt + 1).filter { !$0.isEmpty }
-    guard suffix.count == 1, let footer = suffix.first,
+    // Codex 0.158 adds a shortcut hint row below the status line.
+    guard suffix.count == 1 || (suffix.count == 2 && isShortcutHintRow(suffix[1])),
+      let footer = suffix.first,
       footer.contains(" · "),
       footer.contains("Context ") || footer.contains("context left") || footer.contains("~/")
         || footer.contains("/"),
@@ -89,6 +82,11 @@ enum CodexScreenProfile {
         "Implement {feature}", "Improve documentation in @filename",
         "Write tests for @filename", "Summarize recent commits",
       ].contains(contents)
+  }
+
+  nonisolated private static func isShortcutHintRow(_ line: String) -> Bool {
+    (line.contains(" for shortcuts") || line.contains(" for agents"))
+      && !line.contains("esc to interrupt") && !line.contains("[Image #")
   }
 
   /// The formatter's dim SGR attribute distinguishes hints from identically worded drafts.
@@ -185,6 +183,13 @@ enum CodexScreenProfile {
       andAround: ["1. yes, continue", "2. no, quit"],
       andAfter: ["press enter to continue"]
     )
+      || hasSelectedChoice(
+        regions,
+        matchingAnyOf: ["1. trust and continue", "2. back to agent command center"],
+        withBefore: ["trust this folder?"],
+        andAround: ["1. trust and continue", "2. back to agent command center"],
+        andAfter: ["enter continue · esc back"]
+      )
   }
 
   nonisolated private static func hasHookReviewPrompt(_ regions: CodexScreenRegions) -> Bool {
@@ -332,16 +337,21 @@ private struct CodexScreenRegions: Sendable {
     self.signInInteractionText = signInMenuLines[signInStart...]
       .joined(separator: "\n")
       .trimmingCharacters(in: .newlines)
-    // Background-terminal waits add a `└ command` detail row below the live
-    // footer, before the composer and status line. The composer's starfield
-    // fills otherwise blank rows with braille; those rows must not consume
-    // the live-footer window. Keep every row that contains actual text.
+    // The composer's starfield fills otherwise blank rows with braille; those
+    // rows must not consume the live-footer window. Keep every row that
+    // contains actual text.
     let contentLines = snapshot.lines.filter { line in
       !line.unicodeScalars.allSatisfy { scalar in
         CharacterSet.whitespaces.contains(scalar) || (0x2800...0x28FF).contains(scalar.value)
       }
     }
-    self.workingFooter = contentLines.suffix(4).joined(separator: "\n")
+    // The live footer sits directly above the composer. Detail rows such as a
+    // background `└ command` or a `└ Tip:` can sit between them, and Codex 0.158
+    // adds a shortcut hint row below the status line, so the bottom window alone
+    // can lose the footer. Also read the rows right above the composer.
+    let composerIndex = contentLines.lastIndex { isCodexPromptLine(codexLineWithoutStarfield($0)) }
+    let aboveComposer = composerIndex.map { contentLines[..<$0].suffix(3) } ?? []
+    self.workingFooter = (aboveComposer + contentLines.suffix(4)).joined(separator: "\n")
   }
 
   nonisolated private static func makeSelectedChoice(from lines: [String]) -> SelectedChoice? {
@@ -376,6 +386,18 @@ nonisolated private func isCodexInteractionStart(_ line: String) -> Bool {
     || lower.hasPrefix("do you want ")
     || lower.hasPrefix("would you like ")
     || lower == "hooks need review"
+    || lower == "folder access"
+}
+
+/// Astra paints braille stars into blank composer cells. Replace each star with a
+/// space so cell positions stay intact and separate words do not join.
+nonisolated private func codexLineWithoutStarfield(_ line: String) -> String {
+  String(
+    String.UnicodeScalarView(
+      line.unicodeScalars.map { scalar in
+        (0x2800...0x28FF).contains(scalar.value) ? Unicode.Scalar(" ") : scalar
+      })
+  )
 }
 
 nonisolated private func isCodexPromptLine(_ line: String) -> Bool {

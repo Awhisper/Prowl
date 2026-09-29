@@ -55,14 +55,19 @@ at a `~/.grok/` install (so Cursor's own `agent` entrypoint stays Cursor).
    screen-based status; completion while browsing history is not visible to this detector.
    Codex uses exact bottom-of-screen `•`/`◦ Working (... esc to interrupt)` and
    `•`/`◦ Waiting for background terminal (... esc to interrupt)` footer fallbacks.
+   The footer can also sit up to three text rows above the composer, so `└` detail rows
+   such as a background command or a `Tip:` between them do not hide it.
    Braille-only starfield rows around the composer do not count toward that footer window;
    animation alone does not indicate **Working**.
    An empty Codex composer hint and status line remain **Idle** evidence with Astra's
    starfield background, so a workflow can send its first task before any turn has completed.
+   The shortcut hint row that Codex 0.158 shows below the status line
+   (`← for agents · ? for shortcuts`) does not change this.
    Draft text and attachments do not qualify as an empty composer.
    Its confirmation detector requires a numbered selected row such as `› 1. Yes`
    paired with a live bottom footer or an explicit Yes/No choice structure. It also recognizes
-   the current directory-trust, hook-review, and initial sign-in menus as **Blocked** from
+   the directory-trust (including Codex 0.158's `Trust this folder?` prompt), hook-review,
+   and initial sign-in menus as **Blocked** from
    their complete selected-choice and footer structures. Ordinary prompt text and completed
    responses are not confirmation boundaries.
    Pi also treats its bottom `── <braille spinner> Working ──` footer and the adjacent
@@ -105,6 +110,18 @@ at a `~/.grok/` install (so Cursor's own `agent` entrypoint stays Cursor).
    main activity. Missing/unreadable logs or unknown lineage also fall back to the
    screen. Attribution is heuristic: switching to an old quiet chat before entering
    a new prompt can temporarily retain the previous log candidate.
+
+   A `codex` typed by hand in Codex 0.157+ attaches to a shared background daemon
+   that owns every session log, so the TUI process holds none. Prowl then reads the
+   daemon's logs for the thread this pane's Codex last submitted to, identified
+   through the pane's Codex session log (see
+   [cli identity](cli.md#identity-which-pane-am-i)), plus that thread's subagents.
+   Until the pane's Codex submits its first message, and for a moment after each
+   new submit, detection falls back to the screen. A Codex launched from an Agent
+   Profile or with `--no-daemon` owns its logs and is read directly.
+   If a previously established daemon binding becomes unavailable, detection falls
+   back to the screen but retains its log cursors. When the binding returns, it
+   consumes pending events without replaying earlier turn starts.
 
    Claude reads the detected PID's native registry under its configured root
    (`~/.claude/sessions` by default). `busy` and `shell` mean **Working**, including

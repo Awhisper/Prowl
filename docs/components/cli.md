@@ -87,12 +87,18 @@ process launched inside it (agents, their tools, scripts):
 - `PROWL_WORKTREE_PATH`, `PROWL_ROOT_PATH` — the worktree directory and repository root
   (see [custom-actions](custom-actions.md)).
 
-Resolve your own tab and worktree from it:
+Resolve your own pane, tab, and worktree. Inside Codex (`CODEX_THREAD_ID` is set), take the
+pane from `.data.caller` instead of the variable (see below):
 
 ```bash
-me="$(prowl list --json | jq -c --arg p "$PROWL_PANE_ID" '.data.items[] | select(.pane.id == $p)')"
+if [ -n "${CODEX_THREAD_ID:-}" ]; then
+  self="$(prowl list --json | jq -r '.data.caller.pane.id // empty')"
+else
+  self="$PROWL_PANE_ID"
+fi
+me="$(prowl list --json | jq -c --arg p "$self" '.data.items[] | select(.pane.id == $p)')"
 if [ -z "$me" ]; then
-  echo "no pane matches PROWL_PANE_ID=[$PROWL_PANE_ID] — unset, or prowl reached another Prowl instance; stop, do not guess" >&2
+  echo "no pane matches self=[$self] — unresolved, or prowl reached another Prowl instance; stop, do not guess" >&2
 else
   printf '%s\n' "$me" | jq -r '.tab.id, .worktree.id, .worktree.name, .worktree.path'
 fi
@@ -114,6 +120,23 @@ assume the *focused* pane is you. Prowl itself never trusts the variable for
 attribution; commands that need the calling pane (`agents signal`) resolve it
 from the caller's process ancestry.
 
+**Codex's shared daemon.** Codex 0.157+ runs the commands of a `codex` typed by hand in a
+shared background process (`codex app-server --managed-daemon`). That process keeps the
+environment of whichever terminal last started it, so inside Codex `PROWL_PANE_ID`,
+`PROWL_WORKTREE_PATH`, and `PROWL_ROOT_PATH` can name another pane or one that has closed.
+Only `CODEX_THREAD_ID` is per thread. Prowl stops the process-ancestry walk at that daemon
+and instead maps `CODEX_THREAD_ID` to the pane whose Codex TUI submitted to that thread
+(or to its parent, for a subagent). To make that possible, every pane sets
+`CODEX_TUI_RECORD_SESSION=1` and a pane-owned `CODEX_TUI_SESSION_LOG_PATH`. Codex writes
+the submitted prompts there (mode 0600); Prowl deletes the file once the pane's close can no
+longer be undone. A pane whose Codex has not submitted anything yet, or whose shell
+overrides those variables, cannot be mapped, and caller-scoped commands fail with
+`SOURCE_REQUIRED`.
+Session logs larger than 64 MiB are not mapped. Restarting Codex in the pane resets its
+session log; its first indexed submit can establish the mapping again.
+Codex launched from an Agent Profile, or with `--no-daemon`, runs commands inside the pane
+and is not affected.
+
 ## Commands
 
 ### `prowl list`
@@ -127,6 +150,11 @@ Each item contains:
 - `tab`: `id`, `title`, `selected`
 - `pane`: `id`, `title`, `cwd`, `focused`, `visible`, `agent`
 - `task`: `status` (`running` | `idle` | null)
+
+The response also carries `caller` — `{"pane": {"id"}, "worktree": {"id"}}` — the pane
+Prowl resolved for the process that ran `prowl list`, or no `caller` key when it has
+none. It is the reliable "which pane am I" inside Codex (see
+[Identity](#identity-which-pane-am-i)).
 
 `pane.agent` is the coding agent detected in that pane — a stable machine token
 (`claude`, `codex`, `gemini`, `cursor-agent`, …) or `null` when none is detected.
@@ -154,11 +182,11 @@ Claude running a background **workflow**); otherwise **idle**. See the
 good for coordination but lags a screen by ~2–3 s and can flip to idle **before** a
 TUI finishes painting — confirm with `read --wait-stable`.
 
-Your own pane is `$PROWL_PANE_ID` (see [Identity](#identity-which-pane-am-i)); gate
+Your own pane is `$self` (see [Identity](#identity-which-pane-am-i)); gate
 every action on a target behind the identity lookup result `me` from that section —
 not the bare variable, which could be stale — so the check fails closed:
 ```bash
-[ -n "$me" ] && [ "$pane" != "$PROWL_PANE_ID" ] && prowl send --pane "$pane" '…' --json
+[ -n "$me" ] && [ "$pane" != "$self" ] && prowl send --pane "$pane" '…' --json
 ```
 
 ### `prowl agents`
@@ -256,9 +284,10 @@ Optional `--session` and claimed `--origin` are limited to 256 UTF-8 bytes; `--d
 carries a short result/reason up to 32768 UTF-8 bytes. Values must be non-empty and control-free.
 
 The command accepts no target: Prowl attributes the kernel socket peer PID through process
-ancestry to a live pane. It never uses UI focus or `PROWL_PANE_ID`; external terminals,
-tmux/detached ancestry, and already-closed panes fail with `SOURCE_REQUIRED` or
-`AGENT_GONE`. Public signals report `source=cooperative_cli`, `confidence=exact`; exact
+ancestry to a live pane, or, for a command that Codex's shared daemon runs, through its
+`CODEX_THREAD_ID` (see [Identity](#identity-which-pane-am-i)). It never uses UI focus or
+`PROWL_PANE_ID`; external terminals, tmux/detached ancestry, unmapped Codex daemon
+threads, and already-closed panes fail with `SOURCE_REQUIRED` or `AGENT_GONE`. Public signals report `source=cooperative_cli`, `confidence=exact`; exact
 means explicit channel and caller-pane attribution, not verified business completion.
 Claimed origin never upgrades trust. JSON uses `prowl.cli.agents.signal.v1`.
 
@@ -915,18 +944,21 @@ Follow the returned self-initiated delivery instruction to submit the briefing.
 
 ## Safety & self-targeting
 
-- If your shell runs **inside a Prowl pane**, `$PROWL_PANE_ID` is *you*. Compare
-  every target against it so you don't `key enter` into your own session; the
-  focused pane is not a reliable stand-in (`open` and `focus` move it).
+- If your shell runs **inside a Prowl pane**, `$PROWL_PANE_ID` is *you* — except inside
+  Codex, where you are `.data.caller.pane.id` from `prowl list --json` (see
+  [Identity](#identity-which-pane-am-i)). Compare every target against it so you don't
+  `key enter` into your own session; the focused pane is not a reliable stand-in (`open`
+  and `focus` move it).
 - Close commands require explicit targets and may prompt for GUI confirmation on
   protected work; `--force` bypasses the prompt.
 
 ## A complete loop (run, read, clean up)
 
 ```bash
-me="$(prowl list --json | jq -c --arg p "$PROWL_PANE_ID" '.data.items[] | select(.pane.id == $p)')"
+# $self as resolved in "Identity: which pane am I?"
+me="$(prowl list --json | jq -c --arg p "$self" '.data.items[] | select(.pane.id == $p)')"
 pane="$(prowl create tab MyApp --json | jq -r '.data.target.pane.id')"
-if [ -z "$me" ] || [ "$pane" = "$PROWL_PANE_ID" ]; then
+if [ -z "$me" ] || [ "$pane" = "$self" ]; then
   echo "refusing: self identity is unverified, or \$pane is me" >&2
 else
   prowl send --pane "$pane" 'swift build' --capture --timeout 300 --json
@@ -939,8 +971,8 @@ fi
 
 - Resolve a UUID `pane.id` or current text `pN` before `read`/`send`/`key`/
   `focus`/close — never trust tab titles.
-- You are `$PROWL_PANE_ID`, not "the focused pane"; look up your tab/worktree
-  from it when you need them.
+- You are `$PROWL_PANE_ID` (inside Codex: `prowl list --json` → `.data.caller.pane.id`),
+  not "the focused pane"; look up your tab/worktree from it when you need them.
 - Use `prowl agents --json` for discovery, then `prowl agents read <pN|uuid>` for
   a supported agent's status, blocker, and trustworthy result state; use `prowl list --json`
   when you need all panes, including ordinary shells.

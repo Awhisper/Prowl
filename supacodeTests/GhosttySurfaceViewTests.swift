@@ -239,6 +239,29 @@ struct GhosttySurfaceViewTests {
     #expect(sibling.id != surfaceView.id)
   }
 
+  @Test func launchEnvironmentRecordsACodexSessionLogPerPane() {
+    let runtime = GhosttyRuntime()
+    let surfaceView = GhosttySurfaceView(
+      runtime: runtime,
+      workingDirectory: nil,
+      context: GHOSTTY_SURFACE_CONTEXT_SPLIT,
+      skipsSurfaceCreationForTesting: true
+    )
+    let explicit = GhosttySurfaceView(
+      runtime: runtime,
+      workingDirectory: nil,
+      context: GHOSTTY_SURFACE_CONTEXT_SPLIT,
+      environment: ["CODEX_TUI_SESSION_LOG_PATH": "/custom.jsonl"],
+      skipsSurfaceCreationForTesting: true
+    )
+
+    #expect(surfaceView.launchEnvironment["CODEX_TUI_RECORD_SESSION"] == "1")
+    #expect(
+      surfaceView.launchEnvironment["CODEX_TUI_SESSION_LOG_PATH"]
+        == CodexTUISessionLog.url(for: surfaceView.id).path(percentEncoded: false))
+    #expect(explicit.launchEnvironment["CODEX_TUI_SESSION_LOG_PATH"] == "/custom.jsonl")
+  }
+
   @Test func occlusionDoesNotApplyUntilViewHasSuperviewAndWindow() async {
     let runtime = GhosttyRuntime()
     let surfaceView = GhosttySurfaceView(

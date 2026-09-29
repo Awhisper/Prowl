@@ -181,6 +181,29 @@ nonisolated enum ProcessDetection {
     return procargs2Argv(buffer)
   }
 
+  /// One variable from another same-user process's environment, as the kernel recorded it
+  /// at exec. The caller reads it; nothing the process claims over a socket is trusted.
+  static func processEnvironmentValue(pid: pid_t, name: String) -> String? {
+    guard let buffer = kernProcargs2(pid: pid) else { return nil }
+    let prefix = name + "="
+    guard let entry = procargs2Environment(buffer)?.first(where: { $0.hasPrefix(prefix) }) else { return nil }
+    return String(entry.dropFirst(prefix.count))
+  }
+
+  /// Codex 0.157+ runs every thread's shell commands in this shared process. Its
+  /// environment and ancestry belong to whichever process last started it, never to
+  /// the pane that drives a given thread.
+  static func isCodexManagedDaemon(pid: pid_t) -> Bool {
+    guard let info = processBSDInfo(pid: pid), comm(from: info) == "codex",
+      let arguments = processArguments(pid: pid)
+    else { return false }
+    return isCodexManagedDaemon(arguments: arguments)
+  }
+
+  static func isCodexManagedDaemon(arguments: [String]) -> Bool {
+    arguments.contains("app-server") && arguments.contains("--managed-daemon")
+  }
+
   static func processBSDInfo(pid: pid_t) -> proc_bsdinfo? {
     var info = proc_bsdinfo()
     let size = MemoryLayout<proc_bsdinfo>.size
@@ -278,6 +301,18 @@ nonisolated enum ProcessDetection {
   }
 
   static func procargs2Argv(_ buffer: [UInt8]) -> [String]? {
+    guard let parsed = procargs2Strings(buffer) else { return nil }
+    let argv = Array(parsed.strings.prefix(parsed.argc))
+    return argv.isEmpty ? nil : argv
+  }
+
+  /// The `NAME=value` strings that follow argv in a `KERN_PROCARGS2` buffer.
+  static func procargs2Environment(_ buffer: [UInt8]) -> [String]? {
+    guard let parsed = procargs2Strings(buffer), parsed.strings.count >= parsed.argc else { return nil }
+    return parsed.strings.dropFirst(parsed.argc).filter { $0.contains("=") }
+  }
+
+  private static func procargs2Strings(_ buffer: [UInt8]) -> (argc: Int, strings: [String])? {
     guard buffer.count >= MemoryLayout<Int32>.size else { return nil }
     let argc = buffer.withUnsafeBytes { rawBuffer in
       rawBuffer.loadUnaligned(as: Int32.self)
@@ -291,21 +326,30 @@ nonisolated enum ProcessDetection {
       position += 1
     }
 
-    var argv: [String] = []
-    while position < buffer.count, argv.count < Int(argc) {
+    var strings: [String] = []
+    // Only the executable-path padding may contain extra NUL bytes. Within argv,
+    // each NUL ends one argument, including an empty one.
+    for _ in 0..<Int(argc) {
+      guard position < buffer.count, let end = buffer[position...].firstIndex(of: 0),
+        let value = String(bytes: buffer[position..<end], encoding: .utf8)
+      else { return nil }
+      strings.append(value)
+      position = end + 1
+    }
+    while position < buffer.count {
       let start = position
       while position < buffer.count, buffer[position] != 0 {
         position += 1
       }
       if position > start, let value = String(bytes: buffer[start..<position], encoding: .utf8) {
-        argv.append(value)
+        strings.append(value)
       }
       while position < buffer.count, buffer[position] == 0 {
         position += 1
       }
     }
 
-    return argv.isEmpty ? nil : argv
+    return (Int(argc), strings)
   }
 
   static func basename(_ raw: String) -> String? {

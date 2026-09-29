@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "captured_at": "2026-09-28T13:57:02Z",
+  "cli_version": "0.158.0",
+  "capture_source": "prowl-read-detection",
+  "terminal": {
+    "columns": 199,
+    "rows": 58
+  },
+  "redactions": [
+    "disposable probe workspace path replaced with <WORKSPACE>",
+    "model name replaced with <MODEL>",
+    "scripted probe reply replaced with <REPLY>",
+    "context, weekly quota, token total, and elapsed time replaced with placeholders"
+  ],
+  "issue": null
+}

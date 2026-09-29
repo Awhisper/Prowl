@@ -193,13 +193,7 @@ final class WorkflowCommandHandler: CommandHandler {
   private func callerPane(context: CLICommandContext, paneByShellPID: [pid_t: CallerPane])
     -> CallerPane?
   {
-    if !context.callerProcessAncestry.isEmpty {
-      return CallerPaneResolver.pane(
-        forCallerProcessAncestry: context.callerProcessAncestry, paneByShellPID: paneByShellPID)
-    }
-    guard let callerProcessID = context.callerProcessID else { return nil }
-    return CallerPaneResolver.pane(
-      forCallerProcess: callerProcessID, paneByShellPID: paneByShellPID)
+    CallerPaneResolver.pane(for: context, paneByShellPID: paneByShellPID)
   }
 
   // MARK: - Listing

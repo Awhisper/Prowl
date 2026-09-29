@@ -549,7 +549,7 @@ final class WorktreeTerminalManager {
   func recordAgentSignal(_ signal: AgentSignal, caller: CallerPane) -> AgentSignalRecordOutcome {
     guard containsSurface(caller.surfaceID) else { return .paneGone }
     let evidence = refreshEvidenceEpoch(surfaceID: caller.surfaceID)
-    let generationMatches = evidence.generation.map(caller.processAncestry.contains) ?? false
+    let generationMatches = evidence.generation.map(caller.belongs(to:)) ?? false
     let binding = agentObservationStore.bindingForSignal(
       surfaceID: caller.surfaceID,
       generationMatches: generationMatches,

@@ -19,7 +19,9 @@ Enable **Only show when agents are running** to hide the bar when the roster is 
 content in two narrow wings on either side of the camera cutout, each only as wide as three agent
 icons so the bar covers as few menu bar items as possible. When the left wing cannot fit every
 state count, it hides the Idle count first; on other displays it is a centered
-floating bar overlaid directly on the menu bar at the same height. It
+floating bar overlaid directly on the menu bar at the same height. The floating bar and its
+expanded roster share a fixed width, based on the connected built-in notched display (with a
+380pt minimum), or 380pt when none is available. Expanding the roster does not change that width. It
 stays visible across Spaces and over fullscreen applications and never becomes the active window.
 
 ## Exposure principle
@@ -51,7 +53,7 @@ Idle agents last, and a small `+N` for the rest. Idle icons have a static outlin
 Blocked, and Done icons use a static orange, red, or blue outline in the compact bar. When the same
 icons appear in Blocked or Done attention cards, they retain the original state-paced gradient
 rotation. The floating bar reserves its center control area; when all four states are present, the
-summary switches to compact metrics. The bar keeps a stable 340pt width in every state, avoiding
+summary switches to compact metrics. The bar keeps the same width in every state, avoiding
 both content compression and width jumps as the state mix changes.
 
 Blocked and Done cells form a small grid under the bar: one column for a single entry, two

@@ -43,8 +43,8 @@ struct AgentIslandHoverAnimationTests {
   }
 
   @Test func compactScreenRegionStaysFixedWhenRosterResizesPanel() {
-    let compact = CGRect(x: -970, y: 860, width: 340, height: 40)
-    let expanded = CGRect(x: -1010, y: 600, width: 420, height: 300)
+    let compact = CGRect(x: -970, y: 860, width: 380, height: 40)
+    let expanded = CGRect(x: -970, y: 600, width: 380, height: 300)
     #expect(AgentIslandRootLayout.floatingBarScreenFrame(in: compact, height: 40) == compact)
     #expect(AgentIslandRootLayout.floatingBarScreenFrame(in: expanded, height: 40) == compact)
   }

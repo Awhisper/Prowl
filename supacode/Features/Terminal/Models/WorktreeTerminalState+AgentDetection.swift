@@ -130,7 +130,7 @@ extension WorktreeTerminalState {
     previous.seen = current.seen
     previous.lastChangedAt = current.lastChangedAt
     guard previous == current else { return true }
-    let coordinator = agentDetectionCoordinators[surfaceID] ?? AgentDetectionCoordinator()
+    let coordinator = agentDetectionCoordinators[surfaceID] ?? AgentDetectionCoordinator(surfaceID: surfaceID)
     agentDetectionCoordinators[surfaceID] = coordinator
     let process = Self.processGeneration(identified)
 

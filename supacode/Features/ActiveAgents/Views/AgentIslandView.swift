@@ -7,6 +7,7 @@ import SwiftUI
 @Observable
 final class AgentIslandPresentationModel {
   var notchSize: CGSize?
+  var floatingCompactWidth = AgentIslandRootLayout.floatingCompactWidth
   var floatingMenuBarHeight: CGFloat?
   var floatingBarScreenFrame: CGRect?
 }
@@ -18,9 +19,8 @@ enum AgentIslandFloatingDragEvent {
 }
 
 struct AgentIslandRootLayout {
-  static let floatingCompactWidth: CGFloat = 340
+  static let floatingCompactWidth: CGFloat = 380
   static let fallbackFloatingCompactHeight: CGFloat = 40
-  static let rosterWidth: CGFloat = 420
   /// The notched roster matches the bar above it, but keeps the two-column callout width so its
   /// rows stay readable under a narrow cutout.
   static let minimumNotchedRosterWidth: CGFloat = 380
@@ -28,15 +28,26 @@ struct AgentIslandRootLayout {
   static func width(
     notchCompactWidth: CGFloat?,
     isRosterExpanded: Bool,
-    attentionEntryCount: Int
+    attentionEntryCount: Int,
+    floatingCompactWidth: CGFloat = AgentIslandRootLayout.floatingCompactWidth
   ) -> CGFloat {
-    let compactWidth = notchCompactWidth ?? floatingCompactWidth
+    guard let compactWidth = notchCompactWidth else { return floatingCompactWidth }
     if isRosterExpanded {
-      return max(compactWidth, notchCompactWidth == nil ? rosterWidth : minimumNotchedRosterWidth)
+      return max(compactWidth, minimumNotchedRosterWidth)
     }
     guard attentionEntryCount > 0 else { return compactWidth }
     let attentionWidth = AgentIslandAttentionLayout.layout(entryCount: attentionEntryCount).width
     return max(compactWidth, attentionWidth)
+  }
+
+  static func floatingWidth(screens: [AgentIslandScreenDescriptor]) -> CGFloat {
+    guard let cutout = screens.first(where: { $0.isBuiltIn && $0.hasNotch })?.notchFrame else {
+      return floatingCompactWidth
+    }
+    return max(
+      AgentIslandNotchLayout(cutoutSize: cutout.size).compactWidth,
+      minimumNotchedRosterWidth
+    )
   }
 
   static func compactHeight(
@@ -54,9 +65,9 @@ struct AgentIslandRootLayout {
 
   static func floatingBarScreenFrame(in panelFrame: CGRect, height: CGFloat) -> CGRect {
     CGRect(
-      x: panelFrame.midX - floatingCompactWidth / 2,
+      x: panelFrame.minX,
       y: panelFrame.maxY - height,
-      width: floatingCompactWidth,
+      width: panelFrame.width,
       height: height
     )
   }
@@ -228,7 +239,7 @@ struct AgentIslandView: View {
             compactChevron
           }
           .padding(.horizontal, 14)
-          .frame(width: AgentIslandRootLayout.floatingCompactWidth, height: compactHeight)
+          .frame(width: presentation.floatingCompactWidth, height: compactHeight)
         }
       }
       .contentShape(.rect)
@@ -398,7 +409,6 @@ struct AgentIslandView: View {
         selectedSurfaceID: selectedSurfaceID
       )
     }
-    // Same width as the bar above it: the notched bar is wider than the floating roster.
     .frame(width: rootWidth)
     .background(.black, in: RoundedRectangle(cornerRadius: 12))
     .overlay {
@@ -509,7 +519,8 @@ struct AgentIslandView: View {
     AgentIslandRootLayout.width(
       notchCompactWidth: notchLayout?.compactWidth,
       isRosterExpanded: agentsStore.isIslandRosterExpanded,
-      attentionEntryCount: agentsStore.islandAttentionEntries.count
+      attentionEntryCount: agentsStore.islandAttentionEntries.count,
+      floatingCompactWidth: presentation.floatingCompactWidth
     )
   }
 

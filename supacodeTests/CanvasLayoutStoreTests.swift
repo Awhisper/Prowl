@@ -6,6 +6,35 @@ import Testing
 
 @MainActor
 struct CanvasLayoutStoreTests {
+  @Test func releasesSynchronouslyWithTaskLocalStorageOutsideATask() async {
+    // Swift Testing runs in a Task. A main-queue callback reproduces synchronous
+    // UI teardown with thread-local TaskLocal storage instead of task-owned storage.
+    await withCheckedContinuation { continuation in
+      DispatchQueue.main.async {
+        MainActor.assumeIsolated {
+          #expect(Thread.isMainThread)
+          withUnsafeCurrentTask { #expect($0 == nil) }
+          let defaults = makeDefaults()
+          defer { defaults.removePersistentDomain(forName: defaultsSuiteName(defaults)) }
+          let layouts = ["tab-a": CanvasCardLayout(position: CGPoint(x: 10, y: 20))]
+
+          CanvasLayoutStoreTestLocal.$marker.withValue(1) {
+            var store: CanvasLayoutStore? = CanvasLayoutStore(defaults: defaults)
+            weak let releasedStore = store
+            store?.setCardLayouts(layouts)
+            store = nil
+
+            #expect(releasedStore == nil)
+            #expect(CanvasLayoutStoreTestLocal.marker == 1)
+            #expect(CanvasLayoutStore(defaults: defaults).cardLayouts == layouts)
+          }
+          #expect(CanvasLayoutStoreTestLocal.marker == 0)
+          continuation.resume()
+        }
+      }
+    }
+  }
+
   @Test func loadsLegacyCardLayoutDictionary() throws {
     let defaults = makeDefaults()
     defer { defaults.removePersistentDomain(forName: defaultsSuiteName(defaults)) }
@@ -74,6 +103,10 @@ struct CanvasLayoutStoreTests {
     #expect(Array(store.cardLayouts.keys) == ["tab-b"])
     #expect(store.zOrder == ["tab-b"])
   }
+}
+
+private enum CanvasLayoutStoreTestLocal {
+  @TaskLocal static var marker = 0
 }
 
 private func makeDefaults() -> UserDefaults {

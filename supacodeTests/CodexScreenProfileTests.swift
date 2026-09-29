@@ -106,6 +106,87 @@ struct CodexScreenProfileTests {
     #expect(detection.reason == .matched(CodexScreenProfile.RuleID.emptyComposer))
   }
 
+  @Test func shortcutHintRowBelowStatusLineKeepsEmptyComposer() {
+    let detection = DetectedAgent.codex.detectScreen(
+      in: """
+        › Ask Codex to do anything
+
+          gpt-6-astra medium · Context 0% used · ~/work
+          ← for agents · ? for shortcuts
+        """
+    )
+
+    #expect(detection.state == .idle)
+    #expect(detection.reason == .matched(CodexScreenProfile.RuleID.emptyComposer))
+  }
+
+  @Test func composerRejectsUnknownOrInterruptibleRowBelowStatusLine() {
+    for row in ["world", "esc to interrupt · ? for shortcuts", "? for shortcuts · [Image #1]"] {
+      #expect(
+        !CodexScreenProfile.composerIsEmpty(
+          in: .init(text: "› Ask Codex to do anything\n\n  gpt-5.6 · ~/work\n  \(row)")))
+    }
+    #expect(
+      !CodexScreenProfile.composerIsEmpty(
+        in: .init(text: "› Ask Codex to do anything\n  gpt-5.6 · ~/work\n  ? for shortcuts\n  ? for shortcuts")))
+  }
+
+  @Test func detailRowsBetweenLiveFooterAndComposerKeepWorking() {
+    for activity in ["Working", "Waiting for background terminal"] {
+      let detection = DetectedAgent.codex.detectScreen(
+        in: """
+          • Ran make test
+            └ Test Suite passed
+
+          • \(activity) (3m 21s • esc to interrupt)
+            └ sleep 25
+            └ Tip: Use /export to save your conversation as Markdown.
+
+
+          › Ask Codex to do anything
+
+            gpt-6-astra medium · Context 34% used · ~/work · main · 258K window
+            ← for agents · ? for shortcuts
+          """
+      )
+
+      #expect(detection.state == .working)
+    }
+  }
+
+  @Test func workingFooterFarAboveComposerIsHistory() {
+    let detection = DetectedAgent.codex.detectScreen(
+      in: """
+        • Working (1s • esc to interrupt)
+          Result one
+          Result two
+          Result three
+        › Ask Codex to do anything
+          gpt-6-astra medium · Context 5% used
+          ← for agents · ? for shortcuts
+        """
+    )
+
+    #expect(detection.state == .idle)
+    #expect(detection.reason == .matched(CodexScreenProfile.RuleID.emptyComposer))
+  }
+
+  @Test func folderTrustBlockerStartsAtItsTitle() throws {
+    let fixture = try #require(
+      AgentScreenFixtureCorpus.load().first {
+        $0.relativePath == "codex/0.158.0/blocked/folder-trust.txt"
+      }
+    )
+
+    let blocker = CodexScreenProfile.blockerText(
+      in: DetectedAgent.codex.detectionSnapshot(from: fixture.text)
+    )
+
+    #expect(blocker?.hasPrefix("  Folder access") == true)
+    #expect(blocker?.contains("› 1. Trust and continue") == true)
+    #expect(blocker?.contains("enter continue · esc back") == true)
+  }
+
   @Test func ruleIDsAreUniqueAndRuntimePrefixed() {
     let ruleIDs = CodexScreenProfile.RuleID.all
 
@@ -132,6 +213,9 @@ struct CodexScreenProfileTests {
       "codex/0.153.2/working/background-terminal-footer.txt": .matched(
         CodexScreenProfile.RuleID.backgroundTerminalFooter
       ),
+      "codex/0.158.0/blocked/folder-trust.txt": .matched(CodexScreenProfile.RuleID.directoryTrust),
+      "codex/0.158.0/idle/agents-hint-composer.txt": .matched(CodexScreenProfile.RuleID.emptyComposer),
+      "codex/0.158.0/working/tip-below-footer.txt": .matched(CodexScreenProfile.RuleID.workingFooter),
     ]
     let fixtures = try AgentScreenFixtureCorpus.load().filter { $0.agent == .codex }
 

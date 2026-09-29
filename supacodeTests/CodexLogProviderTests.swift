@@ -231,4 +231,102 @@ struct CodexLogProviderTests {
     let malformed = await provider.sample(paths: [path])
     if case .unavailable = malformed.first {} else { Issue.record("Malformed append must invalidate") }
   }
+
+  private func startedTurns(_ events: [AgentDetectionEvent]) -> [String] {
+    events.compactMap { event in
+      if case .turnStarted(_, let turn) = event { return turn }
+      return nil
+    }
+  }
+
+  private func complete(_ turn: String) -> String {
+    #"{"type":"event_msg","payload":{"type":"task_complete","turn_id":"\#(turn)"}}"# + "\n"
+  }
+
+  // A daemon thread is bound only after its user item lands, which is after `task_started`.
+  // Starting a pre-existing rollout at its end would miss that open turn.
+  @Test func liveOffsetStartsAPreexistingRolloutAtTheBoundTurn() async throws {
+    let directory = try fixture()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let path = directory.appending(path: "a.jsonl")
+    let prefix = header("a") + start("t1") + complete("t1")
+    try (prefix + start("t2")).write(to: path, atomically: false, encoding: .utf8)
+    let offset = UInt64(prefix.utf8.count)
+
+    let baselined = CodexLogProvider(startedAt: .distantFuture)
+    #expect(startedTurns(await baselined.sample(paths: [path])).isEmpty)
+    let bound = CodexLogProvider(startedAt: .distantFuture)
+    #expect(startedTurns(await bound.sample(paths: [path], liveOffsets: [path: offset])) == ["t2"])
+    let invalid = CodexLogProvider(startedAt: .distantFuture)
+    #expect(startedTurns(await invalid.sample(paths: [path], liveOffsets: [path: 1 << 40])).isEmpty)
+  }
+
+  @Test func aTUIWithoutOwnRolloutsReadsItsDaemonBinding() async throws {
+    let directory = try fixture()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let path = directory.appending(path: "rollout-daemon.jsonl")
+    let prefix = header("root")
+    try (prefix + start("t1")).write(to: path, atomically: false, encoding: .utf8)
+    let started = try #require(ProcessDetection.processStartDate(pid: getpid()))
+    let process = AgentProcessGeneration(pid: getpid(), startedAt: started)
+    let requested = Mutex<[URL?]>([])
+    let configRoot = directory.appending(path: "home")
+    let provider = CodexLogProvider(
+      startedAt: .distantFuture,
+      daemonBinding: { generation, root in
+        #expect(generation == process)
+        requested.withLock { $0.append(root) }
+        return CodexDaemonBinding(
+          rootID: "root", paths: [path.path(percentEncoded: false)],
+          liveOffsets: [path.path(percentEncoded: false): UInt64(prefix.utf8.count)])
+      })
+
+    let events = await provider.sample(process: process, configRoot: configRoot)
+
+    #expect(startedTurns(events) == ["t1"])
+    #expect(requested.withLock { $0 } == [configRoot as URL?])
+  }
+
+  @Test func missingDaemonBindingSuspendsWithoutDiscardingProgress() async throws {
+    let directory = try fixture()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let path = directory.appending(path: "rollout-daemon.jsonl")
+    let prefix = header("root")
+    try (prefix + start("t1")).write(to: path, atomically: false, encoding: .utf8)
+    let started = try #require(ProcessDetection.processStartDate(pid: getpid()))
+    let process = AgentProcessGeneration(pid: getpid(), startedAt: started)
+    let available = Mutex(true)
+    let provider = CodexLogProvider(
+      startedAt: .distantFuture,
+      daemonBinding: { _, _ in
+        guard available.withLock({ $0 }) else { return nil }
+        return CodexDaemonBinding(
+          rootID: "root", paths: [path.path], liveOffsets: [path.path: UInt64(prefix.utf8.count)])
+      })
+
+    #expect(startedTurns(await provider.sample(process: process, configRoot: nil)) == ["t1"])
+    available.withLock { $0 = false }
+    let missing = await provider.sample(process: process, configRoot: nil)
+    if case .suspended = missing.first {} else { Issue.record("Missing binding must suspend") }
+    try append(complete("t1"), to: path)
+    available.withLock { $0 = true }
+    let recovered = await provider.sample(process: process, configRoot: nil)
+    #expect(startedTurns(recovered).isEmpty)
+    if case .turnEnded("root", "t1") = recovered.last {} else { Issue.record("Completion was lost") }
+    #expect(await provider.metadataReadCount == 1)
+  }
+
+  @Test func managedDaemonPIDRequiresALiveDaemonProcess() throws {
+    let home = try fixture()
+    defer { try? FileManager.default.removeItem(at: home) }
+    let directory = home.appending(path: "app-server-daemon")
+    try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+    try Data(#"{"pid":4242,"processStartTime":"x"}"#.utf8).write(to: directory.appending(path: "daemon.pid"))
+
+    #expect(CodexLogProvider.managedDaemonPID(codexHome: home, isManagedDaemon: { $0 == 4242 }) == 4242)
+    #expect(CodexLogProvider.managedDaemonPID(codexHome: home, isManagedDaemon: { _ in false }) == nil)
+    #expect(
+      CodexLogProvider.managedDaemonPID(codexHome: home.appending(path: "missing"), isManagedDaemon: { _ in true })
+        == nil)
+  }
 }
