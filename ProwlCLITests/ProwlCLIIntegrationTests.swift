@@ -2045,7 +2045,8 @@ final class ProwlCLIIntegrationTests: XCTestCase {
                 handle: 8,
                 title: "zsh",
                 cwd: "/Users/onevcat/Projects/Prowl",
-                focused: true
+                focused: true,
+                visible: true
               ),
               task: ListTask(status: "running")
             )
@@ -2173,6 +2174,43 @@ final class ProwlCLIIntegrationTests: XCTestCase {
     XCTAssertTrue(result.stdout.contains("No agents found."), "Expected empty message: \(result.stdout)")
   }
 
+  func testListRendersPanesFromAnAppThatOmitsVisibility() throws {
+    let socketPath = temporarySocketPath(suffix: "list-no-visible")
+    let data = try RawJSON(
+      encoding: ListResponseData(
+        count: 1,
+        items: [
+          ListResponseItem(
+            worktree: ListWorktree(
+              id: "wt-1", name: "main",
+              path: "/Projects/Alpha", rootPath: "/Projects/Alpha", kind: "git"
+            ),
+            tab: ListTab(id: "t1", title: "Tab A", selected: true),
+            pane: ListPane(id: "p1", title: "zsh", cwd: "/Projects/Alpha", focused: true, visible: nil),
+            task: ListTask(status: "running")
+          )
+        ]
+      ))
+    let encoded = try XCTUnwrap(String(bytes: data.bytes, encoding: .utf8))
+    XCTAssertFalse(encoded.contains("visible"), "Fixture must match an app that predates pane.visible: \(encoded)")
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.sortedKeys]
+    let responseData = try encoder.encode(
+      CommandResponse(ok: true, command: "list", schemaVersion: "prowl.cli.list.v1", data: data))
+    // The current schema requires pane.visible, so an older app's response bypasses the
+    // schema check that runWithMockServer applies.
+    let server = try MockSocketServer(socketPath: socketPath, responseData: responseData)
+    defer { server.stop() }
+    try server.start()
+
+    let result = try runProwl(args: ["list"], environment: [ProwlSocket.environmentKey: socketPath])
+
+    XCTAssertEqual(result.exitCode, 0)
+    XCTAssertNotNil(server.waitForRequest(timeout: 2.0), "No request received by mock server")
+    XCTAssertTrue(result.stdout.contains("Alpha:main (running)"), "Missing worktree: \(result.stdout)")
+    XCTAssertFalse(result.stdout.contains("ok: list"), "Fell back to the generic renderer: \(result.stdout)")
+  }
+
   func testListMultipleWorktreesGroupedWithBlankLine() throws {
     let socketPath = temporarySocketPath(suffix: "list-multi-wt")
     let response = try CommandResponse(
@@ -2189,7 +2227,7 @@ final class ProwlCLIIntegrationTests: XCTestCase {
                 path: "/Projects/Alpha", rootPath: "/Projects/Alpha", kind: "git"
               ),
               tab: ListTab(id: "t1", title: "Tab A", selected: true),
-              pane: ListPane(id: "p1", title: "zsh", cwd: "/Projects/Alpha", focused: true),
+              pane: ListPane(id: "p1", title: "zsh", cwd: "/Projects/Alpha", focused: true, visible: true),
               task: ListTask(status: "running")
             ),
             ListResponseItem(
@@ -2198,7 +2236,7 @@ final class ProwlCLIIntegrationTests: XCTestCase {
                 path: "/Projects/Beta", rootPath: "/Projects/Beta", kind: "git"
               ),
               tab: ListTab(id: "t2", title: "Tab B", selected: true),
-              pane: ListPane(id: "p2", title: "zsh", cwd: "/Projects/Beta", focused: false),
+              pane: ListPane(id: "p2", title: "zsh", cwd: "/Projects/Beta", focused: false, visible: true),
               task: ListTask(status: "idle")
             ),
           ]
@@ -2237,7 +2275,7 @@ final class ProwlCLIIntegrationTests: XCTestCase {
                 path: "/Projects/App", rootPath: "/Projects/App", kind: "git"
               ),
               tab: ListTab(id: "t1", title: "Tab 1", selected: true),
-              pane: ListPane(id: "p-same", title: "zsh", cwd: "/Projects/App", focused: true),
+              pane: ListPane(id: "p-same", title: "zsh", cwd: "/Projects/App", focused: true, visible: true),
               task: ListTask(status: "idle")
             ),
             ListResponseItem(
@@ -2246,7 +2284,7 @@ final class ProwlCLIIntegrationTests: XCTestCase {
                 path: "/Projects/App", rootPath: "/Projects/App", kind: "git"
               ),
               tab: ListTab(id: "t1", title: "Tab 1", selected: true),
-              pane: ListPane(id: "p-diff", title: "zsh", cwd: "/Users/onevcat", focused: false),
+              pane: ListPane(id: "p-diff", title: "zsh", cwd: "/Users/onevcat", focused: false, visible: true),
               task: ListTask(status: "idle")
             ),
           ]
@@ -2289,7 +2327,7 @@ final class ProwlCLIIntegrationTests: XCTestCase {
                 path: "/Projects/App", rootPath: "/Projects/App", kind: "git"
               ),
               tab: ListTab(id: "tab-a", title: "Tab A", selected: false),
-              pane: ListPane(id: "pa1", title: "zsh", cwd: "/Projects/App", focused: false),
+              pane: ListPane(id: "pa1", title: "zsh", cwd: "/Projects/App", focused: false, visible: false),
               task: ListTask(status: "idle")
             ),
             ListResponseItem(
@@ -2298,7 +2336,7 @@ final class ProwlCLIIntegrationTests: XCTestCase {
                 path: "/Projects/App", rootPath: "/Projects/App", kind: "git"
               ),
               tab: ListTab(id: "tab-b", title: "Tab B", selected: true),
-              pane: ListPane(id: "pb1", title: "vim", cwd: "/Projects/App", focused: true),
+              pane: ListPane(id: "pb1", title: "vim", cwd: "/Projects/App", focused: true, visible: true),
               task: ListTask(status: "idle")
             ),
             ListResponseItem(
@@ -2307,7 +2345,7 @@ final class ProwlCLIIntegrationTests: XCTestCase {
                 path: "/Projects/App", rootPath: "/Projects/App", kind: "git"
               ),
               tab: ListTab(id: "tab-b", title: "Tab B", selected: true),
-              pane: ListPane(id: "pb2", title: "htop", cwd: "/Projects/App", focused: false),
+              pane: ListPane(id: "pb2", title: "htop", cwd: "/Projects/App", focused: false, visible: true),
               task: ListTask(status: "idle")
             ),
           ]
@@ -2343,7 +2381,7 @@ final class ProwlCLIIntegrationTests: XCTestCase {
                 path: "/Projects/App", rootPath: "/Projects/App", kind: "git"
               ),
               tab: ListTab(id: "t1", title: "Tab A", selected: true),
-              pane: ListPane(id: "p1", title: "zsh", cwd: "/Projects/App", focused: true),
+              pane: ListPane(id: "p1", title: "zsh", cwd: "/Projects/App", focused: true, visible: true),
               task: ListTask(status: "running")
             )
           ]
@@ -3628,6 +3666,7 @@ private struct ListPane: Encodable {
   let title: String
   let cwd: String?
   let focused: Bool
+  let visible: Bool?
   let agent: String?
 
   init(
@@ -3636,6 +3675,7 @@ private struct ListPane: Encodable {
     title: String,
     cwd: String?,
     focused: Bool,
+    visible: Bool?,
     agent: String? = nil
   ) {
     self.id = id
@@ -3643,6 +3683,7 @@ private struct ListPane: Encodable {
     self.title = title
     self.cwd = cwd
     self.focused = focused
+    self.visible = visible
     self.agent = agent
   }
 }

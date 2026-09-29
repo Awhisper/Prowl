@@ -148,7 +148,7 @@ prowl list --json
 Each item contains:
 - `worktree`: `id`, `name`, `path`, `root_path`, `kind` (`git`|`plain`|`workspace`)
 - `tab`: `id`, `title`, `selected`
-- `pane`: `id`, `title`, `cwd`, `focused`, `agent`
+- `pane`: `id`, `title`, `cwd`, `focused`, `visible`, `agent`
 - `task`: `status` (`running` | `idle` | null)
 
 The response also carries `caller` — `{"pane": {"id"}, "worktree": {"id"}}` — the pane
@@ -161,6 +161,9 @@ none. It is the reliable "which pane am I" inside Codex (see
 It comes from the same agent detection described in
 [agent-detection](agent-detection.md) and is useful for coordinating who is who
 (for example before an agent workflow run).
+
+`pane.visible` is true when the surface intersects a visible viewport in an on-screen,
+unminimized window. It includes visible background split panes and does not require focus.
 
 These are JSON fields, so `tab.id` and `pane.id` remain UUIDs. Plain `prowl list`
 instead shows `tN` for each tab and `pN` for each pane; pass either handle back

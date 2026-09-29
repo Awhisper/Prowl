@@ -25,6 +25,90 @@ INTERVAL=${PROWL_SPIKE_INTERVAL:-2}
 MAX_WAIT=${PROWL_SPIKE_MAX_WAIT:-7200}
 NEEDED=${PROWL_SPIKE_CONSECUTIVE:-2}
 
+# A CLI query may take this long before it is abandoned. Its answer is only kept if it
+# arrived inside the sampled window (see keep_if_sampled), so the timeout just
+# bounds how long the script waits; it does not decide correctness.
+CLI_TIMEOUT=$((SAMPLE_SECONDS + 5))
+
+# sample(1) stamps its Date/Time header when sampling begins, 28-36 ms after launch in
+# ten measured runs on a loaded host. The CLI queries wait this long after the launch
+# so their answers normally land inside the sampled window rather than before it.
+QUERY_OFFSET=0.25
+
+# Runs a prowl query into a file, QUERY_OFFSET after the sample launch, and marks when
+# the answer arrived. The marker is a file created by a shell builtin; its modification
+# time is the kernel's clock. perl's alarm survives the exec.
+query_cli() {
+  local out=$1
+  shift
+  /bin/sleep "$QUERY_OFFSET"
+  # The group's stderr also takes bash's own "Alarm clock" notice for a timed-out call.
+  { /usr/bin/perl -e 'alarm shift @ARGV; exec @ARGV or exit 127' "$CLI_TIMEOUT" prowl "$@" > "$out"; } \
+    2>/dev/null || printf '{"ok":false,"reason":"no answer within %ss"}\n' "$CLI_TIMEOUT" > "$out"
+  : > "$out.answered"
+}
+
+# Prints when sample(1) began sampling, as epoch seconds, from its own Date/Time header.
+sample_started_at() {
+  /usr/bin/perl -MTime::Local -ne '
+    if (/^Date\/Time:\s+(\d+)-(\d+)-(\d+) (\d+):(\d+):(\d+)(\.\d+)? ([+-])(\d\d)(\d\d)/) {
+      my $utc = timegm($6, $5, $4, $3, $2 - 1, $1) + ($7 || 0);
+      my $offset = ($9 * 3600 + $10 * 60) * ($8 eq "+" ? 1 : -1);
+      printf "%.3f\n", $utc - $offset;
+      exit;
+    }' "$1" 2>/dev/null || true
+}
+
+# Prints the socket path the prowl CLI connects to, as ProwlSocket.defaultPath does.
+prowl_cli_socket() {
+  if [ -n "${PROWL_CLI_SOCKET:-}" ]; then
+    printf '%s\n' "$PROWL_CLI_SOCKET"
+    return
+  fi
+  local preferred="$HOME/Library/Application Support/com.onevcat.prowl/cli.sock"
+  # sockaddr_un.sun_path is 104 bytes on Darwin, including the NUL terminator.
+  if [ "$(printf '%s' "$preferred" | wc -c)" -lt 104 ]; then
+    printf '%s\n' "$preferred"
+  else
+    local tmp=${TMPDIR:-$(getconf DARWIN_USER_TEMP_DIR)}
+    printf '%s\n' "${tmp%/}/prowl-cli.sock"
+  fi
+}
+
+# Prints why the CLI does not answer for process $1, or nothing when it does. Debug
+# and Release apps share the default socket path and only one app serves it, so a
+# CLI answer can describe another app than the sampled one.
+cli_socket_mismatch() {
+  local pid=$1
+  local socket
+  socket=$(prowl_cli_socket)
+  if ! lsof -a -U -p "$pid" -Fn 2>/dev/null | grep -Fxq "n$socket"; then
+    printf 'CLI socket %s is not served by pid %s\n' "$socket" "$pid"
+  fi
+}
+
+# Keeps a query's answer only if the sampled process gave it while sample(1) was
+# sampling, and otherwise replaces it with {"ok":false} and the reason.
+keep_if_sampled() {
+  local out=$1
+  local answered reason=
+  answered=$(/usr/bin/stat -f %Fm "$out.answered")
+  if [ -n "$SOCKET_MISMATCH" ]; then
+    reason=$SOCKET_MISMATCH
+  elif [ -z "$WINDOW_START" ]; then
+    reason="the sample recorded no start time"
+  elif awk -v a="$answered" -v s="$WINDOW_START" 'BEGIN { exit !(a < s) }'; then
+    reason="answered before sampling started"
+  elif awk -v a="$answered" -v e="$WINDOW_END" 'BEGIN { exit !(a > e) }'; then
+    reason="answered after sampling ended"
+  fi
+  # An answer from another app is wrong even when the CLI reported a failure.
+  if [ -n "$SOCKET_MISMATCH" ] || { [ -n "$reason" ] && jq -e '.ok' < "$out" > /dev/null 2>&1; }; then
+    jq -cn --arg reason "$reason" '{ok: false, reason: $reason}' > "$out"
+  fi
+  rm -f "$out.answered"
+}
+
 usage_error() {
   echo "$1" >&2
   exit 64
@@ -134,10 +218,21 @@ for _ in $(seq 1 "$ITERATIONS"); do
 
   [ "$STREAK" -ge "$NEEDED" ] || continue
 
+  # Sample first: the spike may not last, so nothing runs ahead of the launch.
+  # Keep the header: it carries the window size every later attribution needs.
+  sample "$PID" "$SAMPLE_SECONDS" -f "$OUT/sample.txt" >/dev/null 2>&1 &
+  SAMPLE_PID=$!
+  # The CLI queries run side by side while the sample runs. Whether an answer describes
+  # the sampled window is decided after the sample ends, from the sample's own clock.
+  query_cli "$OUT/agents.json" agents --json &
+  AGENTS_PID=$!
+  query_cli "$OUT/panes.json" list --json &
+  PANES_PID=$!
+
   echo
   echo "=== spike: sampling for ${SAMPLE_SECONDS}s ==="
-  # Context first: a spike figure without its workload cannot be compared to any
-  # other run, and the host may simply be overcommitted.
+  # Context is recorded while the sample runs, because a spike figure without its
+  # workload cannot be compared to any other run, and the host may be overcommitted.
   {
     echo "triggered_at: $(date -Iseconds)"
     echo "observed:     ${PCT}% of one core (threshold ${THRESHOLD}%)"
@@ -149,16 +244,40 @@ for _ in $(seq 1 "$ITERATIONS"); do
   } > "$OUT/context.txt"
   cat "$OUT/context.txt"
 
-  prowl agents --json 2>/dev/null > "$OUT/agents.json" || printf '{"ok":false}\n' > "$OUT/agents.json"
+  wait "$SAMPLE_PID"
+  wait "$AGENTS_PID" "$PANES_PID"
+  # The window is sample(1)'s own: the Date/Time it stamps when sampling begins, which
+  # carries milliseconds, plus the duration. Neither bound depends on this shell.
+  WINDOW_START=$(sample_started_at "$OUT/sample.txt")
+  WINDOW_END=
+  if [ -n "$WINDOW_START" ]; then
+    WINDOW_END=$(awk -v s="$WINDOW_START" -v d="$SAMPLE_SECONDS" 'BEGIN { printf "%.3f", s + d }')
+  fi
+  # Checked after the sample so that nothing delays its launch. An app binds the socket
+  # only when it launches, so a PID that serves it now served it for the whole sample.
+  SOCKET_MISMATCH=$(cli_socket_mismatch "$PID")
+  keep_if_sampled "$OUT/agents.json"
+  keep_if_sampled "$OUT/panes.json"
+
   jq -r 'if .ok then "agent mix: total=\(.data.agents|length)   "
       + (.data.agents|group_by(.status)|map("\(.[0].status)=\(length)")|join("  "))
-    else "CLI unavailable" end' < "$OUT/agents.json" 2>/dev/null || true
+    else "CLI unavailable" + (if .reason then " (\(.reason))" else "" end) end' < "$OUT/agents.json" 2>/dev/null || true
 
-  # Keep the header: it carries the window size every later attribution needs.
-  sample "$PID" "$SAMPLE_SECONDS" -f "$OUT/sample.txt" >/dev/null 2>&1
+  jq -r '
+    if .ok then
+      .data.items as $items
+      | "pane mix: total=\($items | length)"
+        + "   visible=\(if $items | all(.pane | has("visible")) then $items | map(select(.pane.visible)) | length else "unknown" end)"
+        + "   focused=\($items | map(select(.pane.focused)) | length)"
+        + "   tabs=\($items | map(.tab.id) | unique | length)"
+        + "   selected_tabs=\($items | map(select(.tab.selected) | .tab.id) | unique | length)"
+        + "   worktrees=\($items | map(.worktree.id) | unique | length)"
+    else "pane mix: CLI unavailable" + (if .reason then " (\(.reason))" else "" end) end
+  ' < "$OUT/panes.json" 2>/dev/null || true
+
   echo
   echo "captured: $OUT/sample.txt  ($(wc -l < "$OUT/sample.txt" | tr -d ' ') lines)"
-  echo "          $OUT/context.txt  $OUT/agents.json"
+  echo "          $OUT/context.txt  $OUT/agents.json  $OUT/panes.json"
   exit 0
 done
 

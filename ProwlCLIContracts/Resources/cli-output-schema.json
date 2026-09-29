@@ -830,7 +830,8 @@
         "id",
         "title",
         "cwd",
-        "focused"
+        "focused",
+        "visible"
       ],
       "properties": {
         "id": {
@@ -856,6 +857,9 @@
           ]
         },
         "focused": {
+          "type": "boolean"
+        },
+        "visible": {
           "type": "boolean"
         },
         "agent": {

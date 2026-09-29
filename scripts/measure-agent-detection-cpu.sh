@@ -56,7 +56,47 @@ resolve_prowl_pid() {
   esac
 }
 
+# Prints the socket path the prowl CLI connects to, as ProwlSocket.defaultPath does.
+prowl_cli_socket() {
+  if [ -n "${PROWL_CLI_SOCKET:-}" ]; then
+    printf '%s\n' "$PROWL_CLI_SOCKET"
+    return
+  fi
+  local preferred="$HOME/Library/Application Support/com.onevcat.prowl/cli.sock"
+  # sockaddr_un.sun_path is 104 bytes on Darwin, including the NUL terminator.
+  if [ "$(printf '%s' "$preferred" | wc -c)" -lt 104 ]; then
+    printf '%s\n' "$preferred"
+  else
+    local tmp=${TMPDIR:-$(getconf DARWIN_USER_TEMP_DIR)}
+    printf '%s\n' "${tmp%/}/prowl-cli.sock"
+  fi
+}
+
+# Prints why the CLI does not answer for process $1, or nothing when it does. Debug
+# and Release apps share the default socket path and only one app serves it, so a
+# CLI answer can describe another app than the measured one.
+cli_socket_mismatch() {
+  local pid=$1
+  local socket
+  socket=$(prowl_cli_socket)
+  if ! lsof -a -U -p "$pid" -Fn 2>/dev/null | grep -Fxq "n$socket"; then
+    printf 'CLI socket %s is not served by pid %s\n' "$socket" "$pid"
+  fi
+}
+
+# Runs a prowl query into a file, unless the CLI would answer for another process.
+query_cli() {
+  local out=$1
+  shift
+  if [ -n "$SOCKET_MISMATCH" ]; then
+    jq -cn --arg reason "$SOCKET_MISMATCH" '{ok: false, reason: $reason}' > "$out"
+  else
+    prowl "$@" 2>/dev/null > "$out" || printf '{"ok":false}\n' > "$out"
+  fi
+}
+
 PID=$(resolve_prowl_pid)
+SOCKET_MISMATCH=$(cli_socket_mismatch "$PID")
 
 # Each run gets its own directory so earlier samples stay comparable.
 # ~/Library/Logs is where macOS keeps user-visible diagnostics, so runs survive a
@@ -78,9 +118,25 @@ echo
 echo "=== agent mix ==="
 # Working agents drive the expensive detection path, so the mix is needed to
 # compare two runs honestly.
-prowl agents --json 2>/dev/null > "$OUT/agents.json" || printf '{"ok":false}\n' > "$OUT/agents.json"
-jq -r 'if .ok then "total=\(.data.agents|length)   " + (.data.agents|group_by(.status)|map("\(.[0].status)=\(length)")|join("  ")) else "CLI unavailable" end' \
+query_cli "$OUT/agents.json" agents --json
+jq -r 'if .ok then "total=\(.data.agents|length)   " + (.data.agents|group_by(.status)|map("\(.[0].status)=\(length)")|join("  "))
+    else "CLI unavailable" + (if .reason then " (\(.reason))" else "" end) end' \
   < "$OUT/agents.json" 2>/dev/null || echo "CLI unavailable"
+echo
+
+echo "=== pane visibility ==="
+query_cli "$OUT/panes.json" list --json
+jq -r '
+  if .ok then
+    .data.items as $items
+    | "total=\($items | length)"
+      + "   visible=\(if $items | all(.pane | has("visible")) then $items | map(select(.pane.visible)) | length else "unknown" end)"
+      + "   focused=\($items | map(select(.pane.focused)) | length)"
+      + "   tabs=\($items | map(.tab.id) | unique | length)"
+      + "   selected_tabs=\($items | map(select(.tab.selected) | .tab.id) | unique | length)"
+      + "   worktrees=\($items | map(.worktree.id) | unique | length)"
+  else "CLI unavailable" + (if .reason then " (\(.reason))" else "" end) end
+' < "$OUT/panes.json" 2>/dev/null || echo "CLI unavailable"
 echo
 
 echo "=== process CPU (20 s) ==="
@@ -118,11 +174,23 @@ syms = [
     ('normalize(',                    6.70),
     ('transcriptStrings',             2.47),
     ('recentCandidates',              1.57),
+    ('stepTransactionFlush',           None),
+    ('GraphHost.flushTransactions()',  None),
     ('flushTransactions',              None),
+    ('addGlyph',                       None),
+    ('rebuildRow',                     None),
+    ('wyhash',                         None),
     ('RepositorySectionView',          None),
     ('SidebarActiveAgentsOverlay',     None),
 ]
 tot = {s: 0 for s, _ in syms}
+# Each row is an independent substring total, so a general symbol would also count
+# the frames a more specific row already reports. Exclude those, and say so.
+excluded = {'flushTransactions': ('GraphHost.flushTransactions()',)}
+labels = {'flushTransactions': 'flushTransactions (excluding GraphHost)'}
+
+def matches(s, sym):
+    return s in sym and not any(x in sym for x in excluded.get(s, ()))
 
 for idx, (i, _t, _desc) in enumerate(hdr):
     end = hdr[idx + 1][0] if idx + 1 < len(hdr) else len(lines)
@@ -135,7 +203,7 @@ for idx, (i, _t, _desc) in enumerate(hdr):
     for s, _ in syms:
         counted, mind = [], None
         for d, c, sym in ent:
-            if s in sym:
+            if matches(s, sym):
                 if mind is None or d <= mind:
                     counted.append(c)
                     mind = d
@@ -147,7 +215,7 @@ print(f"{'%core':>7}  {'was':>7}   symbol")
 for s, base in syms:
     pct = 100 * tot[s] / W
     was = f"{base:.2f}%" if base is not None else "  -  "
-    print(f"{pct:6.2f}%  {was:>7}   {s}")
+    print(f"{pct:6.2f}%  {was:>7}   {labels.get(s, s)}")
 
 det = 100 * tot['detectAgentState'] / W
 if det > 0:
@@ -159,4 +227,4 @@ PY
 
 echo
 echo "run dir: $OUT"
-echo "  sample.txt / cpu.txt / summary.txt"
+echo "  sample.txt / cpu.txt / summary.txt / agents.json / panes.json"

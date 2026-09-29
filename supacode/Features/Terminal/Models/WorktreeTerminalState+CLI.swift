@@ -21,6 +21,7 @@ struct CLITerminalPaneSnapshot: Sendable {
   let handle: Int?
   let title: String
   let cwd: String?
+  let visible: Bool
   let agent: String?
 }
 
@@ -43,6 +44,7 @@ extension WorktreeTerminalState {
           handle: registerTargetHandle(for: paneID),
           title: title,
           cwd: cwd,
+          visible: isVisibleSurface(paneID),
           agent: agent
         )
       }
