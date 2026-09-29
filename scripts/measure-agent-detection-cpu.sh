@@ -56,7 +56,47 @@ resolve_prowl_pid() {
   esac
 }
 
+# Prints the socket path the prowl CLI connects to, as ProwlSocket.defaultPath does.
+prowl_cli_socket() {
+  if [ -n "${PROWL_CLI_SOCKET:-}" ]; then
+    printf '%s\n' "$PROWL_CLI_SOCKET"
+    return
+  fi
+  local preferred="$HOME/Library/Application Support/com.onevcat.prowl/cli.sock"
+  # sockaddr_un.sun_path is 104 bytes on Darwin, including the NUL terminator.
+  if [ "$(printf '%s' "$preferred" | wc -c)" -lt 104 ]; then
+    printf '%s\n' "$preferred"
+  else
+    local tmp=${TMPDIR:-$(getconf DARWIN_USER_TEMP_DIR)}
+    printf '%s\n' "${tmp%/}/prowl-cli.sock"
+  fi
+}
+
+# Prints why the CLI does not answer for process $1, or nothing when it does. Debug
+# and Release apps share the default socket path and only one app serves it, so a
+# CLI answer can describe another app than the measured one.
+cli_socket_mismatch() {
+  local pid=$1
+  local socket
+  socket=$(prowl_cli_socket)
+  if ! lsof -a -U -p "$pid" -Fn 2>/dev/null | grep -Fxq "n$socket"; then
+    printf 'CLI socket %s is not served by pid %s\n' "$socket" "$pid"
+  fi
+}
+
+# Runs a prowl query into a file, unless the CLI would answer for another process.
+query_cli() {
+  local out=$1
+  shift
+  if [ -n "$SOCKET_MISMATCH" ]; then
+    jq -cn --arg reason "$SOCKET_MISMATCH" '{ok: false, reason: $reason}' > "$out"
+  else
+    prowl "$@" 2>/dev/null > "$out" || printf '{"ok":false}\n' > "$out"
+  fi
+}
+
 PID=$(resolve_prowl_pid)
+SOCKET_MISMATCH=$(cli_socket_mismatch "$PID")
 
 # Each run gets its own directory so earlier samples stay comparable.
 # ~/Library/Logs is where macOS keeps user-visible diagnostics, so runs survive a
@@ -78,13 +118,14 @@ echo
 echo "=== agent mix ==="
 # Working agents drive the expensive detection path, so the mix is needed to
 # compare two runs honestly.
-prowl agents --json 2>/dev/null > "$OUT/agents.json" || printf '{"ok":false}\n' > "$OUT/agents.json"
-jq -r 'if .ok then "total=\(.data.agents|length)   " + (.data.agents|group_by(.status)|map("\(.[0].status)=\(length)")|join("  ")) else "CLI unavailable" end' \
+query_cli "$OUT/agents.json" agents --json
+jq -r 'if .ok then "total=\(.data.agents|length)   " + (.data.agents|group_by(.status)|map("\(.[0].status)=\(length)")|join("  "))
+    else "CLI unavailable" + (if .reason then " (\(.reason))" else "" end) end' \
   < "$OUT/agents.json" 2>/dev/null || echo "CLI unavailable"
 echo
 
 echo "=== pane visibility ==="
-prowl list --json 2>/dev/null > "$OUT/panes.json" || printf '{"ok":false}\n' > "$OUT/panes.json"
+query_cli "$OUT/panes.json" list --json
 jq -r '
   if .ok then
     .data.items as $items
@@ -94,7 +135,7 @@ jq -r '
       + "   tabs=\($items | map(.tab.id) | unique | length)"
       + "   selected_tabs=\($items | map(select(.tab.selected) | .tab.id) | unique | length)"
       + "   worktrees=\($items | map(.worktree.id) | unique | length)"
-  else "CLI unavailable" end
+  else "CLI unavailable" + (if .reason then " (\(.reason))" else "" end) end
 ' < "$OUT/panes.json" 2>/dev/null || echo "CLI unavailable"
 echo
 

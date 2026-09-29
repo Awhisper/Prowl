@@ -28,6 +28,11 @@ bounded canonical revalidation, and obsolete unmerged branch hashes.
   later. It keeps an answer only if it arrived while sampling ran, from the `Date/Time` in the
   sample's own header to that time plus the duration; otherwise it records `{"ok":false}` with
   the reason.
+- Both profilers keep CLI answers only when the profiled PID serves the socket the CLI connects
+  to (`PROWL_CLI_SOCKET` or the default path). Debug and Release apps share the default path, so
+  otherwise the snapshot could describe another app; the files then record `{"ok":false}` with the
+  socket and PID. The steady-state profiler skips the queries; the spike capture checks after the
+  sample so that nothing runs before `sample`.
 - The steady-state parser reports AppKit transaction flushes, SwiftUI graph flushes, and Ghostty
   glyph, row, and hash work as separate symbols.
 - The detailed performance record is reconciled with #653–#657 and #662–#665, and cross-links this
@@ -52,7 +57,8 @@ and `panes.json` beside the process sample.
 
 - Both scripts passed `bash -n` and ShellCheck with no findings.
 - The script regression test verifies pane capture and independent symbol attribution with fixed
-  command fixtures.
+  command fixtures. It also samples one PID while the CLI socket belongs to another and requires
+  both snapshots to be marked unavailable.
 - Invalid interval and missing-PID paths returned failures; a bounded high-threshold watcher timed
   out as designed.
 - A live CPU-bound process triggered a one-second sample successfully. A separate harmless process

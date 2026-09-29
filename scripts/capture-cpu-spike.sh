@@ -26,7 +26,7 @@ MAX_WAIT=${PROWL_SPIKE_MAX_WAIT:-7200}
 NEEDED=${PROWL_SPIKE_CONSECUTIVE:-2}
 
 # A CLI query may take this long before it is abandoned. Its answer is only kept if it
-# arrived inside the sampled window (see keep_if_inside_sample), so the timeout just
+# arrived inside the sampled window (see keep_if_sampled), so the timeout just
 # bounds how long the script waits; it does not decide correctness.
 CLI_TIMEOUT=$((SAMPLE_SECONDS + 5))
 
@@ -59,21 +59,52 @@ sample_started_at() {
     }' "$1" 2>/dev/null || true
 }
 
-# Keeps a query's answer only if it arrived while sample(1) was sampling, and otherwise
-# replaces it with {"ok":false} and the reason.
-keep_if_inside_sample() {
+# Prints the socket path the prowl CLI connects to, as ProwlSocket.defaultPath does.
+prowl_cli_socket() {
+  if [ -n "${PROWL_CLI_SOCKET:-}" ]; then
+    printf '%s\n' "$PROWL_CLI_SOCKET"
+    return
+  fi
+  local preferred="$HOME/Library/Application Support/com.onevcat.prowl/cli.sock"
+  # sockaddr_un.sun_path is 104 bytes on Darwin, including the NUL terminator.
+  if [ "$(printf '%s' "$preferred" | wc -c)" -lt 104 ]; then
+    printf '%s\n' "$preferred"
+  else
+    local tmp=${TMPDIR:-$(getconf DARWIN_USER_TEMP_DIR)}
+    printf '%s\n' "${tmp%/}/prowl-cli.sock"
+  fi
+}
+
+# Prints why the CLI does not answer for process $1, or nothing when it does. Debug
+# and Release apps share the default socket path and only one app serves it, so a
+# CLI answer can describe another app than the sampled one.
+cli_socket_mismatch() {
+  local pid=$1
+  local socket
+  socket=$(prowl_cli_socket)
+  if ! lsof -a -U -p "$pid" -Fn 2>/dev/null | grep -Fxq "n$socket"; then
+    printf 'CLI socket %s is not served by pid %s\n' "$socket" "$pid"
+  fi
+}
+
+# Keeps a query's answer only if the sampled process gave it while sample(1) was
+# sampling, and otherwise replaces it with {"ok":false} and the reason.
+keep_if_sampled() {
   local out=$1
   local answered reason=
   answered=$(/usr/bin/stat -f %Fm "$out.answered")
-  if [ -z "$WINDOW_START" ]; then
+  if [ -n "$SOCKET_MISMATCH" ]; then
+    reason=$SOCKET_MISMATCH
+  elif [ -z "$WINDOW_START" ]; then
     reason="the sample recorded no start time"
   elif awk -v a="$answered" -v s="$WINDOW_START" 'BEGIN { exit !(a < s) }'; then
     reason="answered before sampling started"
   elif awk -v a="$answered" -v e="$WINDOW_END" 'BEGIN { exit !(a > e) }'; then
     reason="answered after sampling ended"
   fi
-  if [ -n "$reason" ] && jq -e '.ok' < "$out" > /dev/null 2>&1; then
-    printf '{"ok":false,"reason":"%s"}\n' "$reason" > "$out"
+  # An answer from another app is wrong even when the CLI reported a failure.
+  if [ -n "$SOCKET_MISMATCH" ] || { [ -n "$reason" ] && jq -e '.ok' < "$out" > /dev/null 2>&1; }; then
+    jq -cn --arg reason "$reason" '{ok: false, reason: $reason}' > "$out"
   fi
   rm -f "$out.answered"
 }
@@ -222,8 +253,11 @@ for _ in $(seq 1 "$ITERATIONS"); do
   if [ -n "$WINDOW_START" ]; then
     WINDOW_END=$(awk -v s="$WINDOW_START" -v d="$SAMPLE_SECONDS" 'BEGIN { printf "%.3f", s + d }')
   fi
-  keep_if_inside_sample "$OUT/agents.json"
-  keep_if_inside_sample "$OUT/panes.json"
+  # Checked after the sample so that nothing delays its launch. An app binds the socket
+  # only when it launches, so a PID that serves it now served it for the whole sample.
+  SOCKET_MISMATCH=$(cli_socket_mismatch "$PID")
+  keep_if_sampled "$OUT/agents.json"
+  keep_if_sampled "$OUT/panes.json"
 
   jq -r 'if .ok then "agent mix: total=\(.data.agents|length)   "
       + (.data.agents|group_by(.status)|map("\(.[0].status)=\(length)")|join("  "))

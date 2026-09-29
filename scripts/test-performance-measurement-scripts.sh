@@ -104,6 +104,25 @@ JSON
 esac
 EOF
 
+# Only PROWL_FAKE_SOCKET_OWNER (default: PROWL_PID) serves a socket, at
+# PROWL_FAKE_SERVED_SOCKET (default: the CLI's default path).
+cat > "$BIN/lsof" <<'EOF'
+#!/bin/bash
+if [ -n "${PROWL_FAKE_CALLS:-}" ]; then echo "lsof $$" >> "$PROWL_FAKE_CALLS"; fi
+pid=
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = -p ]; then
+    pid=$2
+    shift 2
+  else
+    shift
+  fi
+done
+[ "$pid" = "${PROWL_FAKE_SOCKET_OWNER:-$PROWL_PID}" ] || exit 1
+printf 'p%s\nf5\nn%s\n' "$pid" \
+  "${PROWL_FAKE_SERVED_SOCKET:-$HOME/Library/Application Support/com.onevcat.prowl/cli.sock}"
+EOF
+
 cat > "$BIN/top" <<EOF
 #!/bin/bash
 for _ in \$(seq 1 20); do echo "\${PROWL_PID:-1} 50.0"; done
@@ -274,6 +293,29 @@ grep -Fq '"ok":true' "$ATTACH_DIR/panes.json" || {
 grep -Fq 'pane mix: total=3' <<< "$ATTACH_OUTPUT"
 assert_snapshot_inside_sample "$ATTACH_TIMES"
 
+# The CLI answers for another app than the sampled one: its socket points elsewhere,
+# or another process serves the default socket. Neither answer is kept.
+FOREIGN_SOCKET="$TEST_ROOT/other-app.sock"
+FOREIGN_OUTPUT=$(run_spike "$TEST_ROOT/foreign-measurements" PROWL_CLI_SOCKET="$FOREIGN_SOCKET")
+FOREIGN_DIR=$(spike_dir "$TEST_ROOT/foreign-measurements")
+for file in agents panes; do
+  grep -Fq "\"reason\":\"CLI socket $FOREIGN_SOCKET is not served by pid $$\"" "$FOREIGN_DIR/$file.json" || {
+    echo "$file snapshot from another app's socket was kept: $(cut -c1-60 < "$FOREIGN_DIR/$file.json")" >&2
+    exit 1
+  }
+done
+grep -Fq "CLI unavailable (CLI socket $FOREIGN_SOCKET is not served by pid $$)" <<< "$FOREIGN_OUTPUT"
+grep -Fq "pane mix: CLI unavailable (CLI socket $FOREIGN_SOCKET is not served by pid $$)" <<< "$FOREIGN_OUTPUT"
+
+OTHER_OWNER_OUTPUT=$(run_spike "$TEST_ROOT/other-owner-measurements" PROWL_FAKE_SOCKET_OWNER=1)
+grep -Fq 'pane mix: CLI unavailable (CLI socket ' <<< "$OTHER_OWNER_OUTPUT"
+grep -Fq "is not served by pid $$" "$(spike_dir "$TEST_ROOT/other-owner-measurements")/panes.json"
+
+# A socket override that the sampled process serves is honored.
+OVERRIDE_OUTPUT=$(run_spike "$TEST_ROOT/override-measurements" \
+  PROWL_CLI_SOCKET="$FOREIGN_SOCKET" PROWL_FAKE_SERVED_SOCKET="$FOREIGN_SOCKET")
+grep -Fq 'pane mix: total=3' <<< "$OVERRIDE_OUTPUT"
+
 rm -f "$TEST_ROOT/ps-state"
 MEASURE_OUTPUT=$(
   PATH="$BIN:$PATH" \
@@ -293,5 +335,24 @@ grep -Eq '7\.00% +-[[:space:]]+flushTransactions \(excluding GraphHost\)' <<< "$
 grep -Eq '17\.00% +-[[:space:]]+addGlyph' <<< "$MEASURE_OUTPUT"
 grep -Eq '19\.00% +-[[:space:]]+rebuildRow' <<< "$MEASURE_OUTPUT"
 grep -Eq '23\.00% +-[[:space:]]+wyhash' <<< "$MEASURE_OUTPUT"
+
+# The steady-state profiler does not query a CLI that answers for another app.
+FOREIGN_CALLS="$TEST_ROOT/foreign-calls"
+FOREIGN_MEASURE_OUTPUT=$(
+  PATH="$BIN:$PATH" \
+    PROWL_PID=$$ \
+    PROWL_MEASURE_DIR="$TEST_ROOT/foreign-steady-measurements" \
+    PROWL_CLI_SOCKET="$FOREIGN_SOCKET" \
+    PROWL_FAKE_CALLS="$FOREIGN_CALLS" \
+    bash "$ROOT/scripts/measure-agent-detection-cpu.sh"
+)
+FOREIGN_MEASURE_DIR=$(find "$TEST_ROOT/foreign-steady-measurements" -mindepth 1 -maxdepth 1 -type d)
+if grep -q '^prowl ' "$FOREIGN_CALLS"; then
+  echo "the steady-state profiler queried a CLI socket that another app serves" >&2
+  exit 1
+fi
+grep -Fq "is not served by pid $$" "$FOREIGN_MEASURE_DIR/agents.json"
+grep -Fq "is not served by pid $$" "$FOREIGN_MEASURE_DIR/panes.json"
+[ "$(grep -Fc "CLI unavailable (CLI socket $FOREIGN_SOCKET is not served by pid $$)" <<< "$FOREIGN_MEASURE_OUTPUT")" -eq 2 ]
 
 echo 'performance measurement script tests passed'
