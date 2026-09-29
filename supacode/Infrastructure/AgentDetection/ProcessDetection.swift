@@ -327,6 +327,15 @@ nonisolated enum ProcessDetection {
     }
 
     var strings: [String] = []
+    // Only the executable-path padding may contain extra NUL bytes. Within argv,
+    // each NUL ends one argument, including an empty one.
+    for _ in 0..<Int(argc) {
+      guard position < buffer.count, let end = buffer[position...].firstIndex(of: 0),
+        let value = String(bytes: buffer[position..<end], encoding: .utf8)
+      else { return nil }
+      strings.append(value)
+      position = end + 1
+    }
     while position < buffer.count {
       let start = position
       while position < buffer.count, buffer[position] != 0 {

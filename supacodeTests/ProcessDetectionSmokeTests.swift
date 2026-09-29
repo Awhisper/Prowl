@@ -30,6 +30,18 @@ struct ProcessDetectionSmokeTests {
     #expect(ProcessDetection.procargs2Environment(buffer) == ["CODEX_THREAD_ID=abc", "PATH=/bin"])
   }
 
+  @Test func emptyArgumentsDoNotShiftTheEnvironmentBoundary() {
+    var buffer: [UInt8] = []
+    withUnsafeBytes(of: Int32(3)) { buffer.append(contentsOf: $0) }
+    for string in ["/usr/bin/prowl", "", "prowl", "", "list", "CODEX_THREAD_ID=abc", "PATH=/bin"] {
+      buffer.append(contentsOf: string.utf8)
+      buffer.append(0)
+    }
+
+    #expect(ProcessDetection.procargs2Argv(buffer) == ["prowl", "", "list"])
+    #expect(ProcessDetection.procargs2Environment(buffer) == ["CODEX_THREAD_ID=abc", "PATH=/bin"])
+  }
+
   // The kernel hides the environment of Apple platform binaries (`/bin/sleep`), so the test
   // reads its own host process, which, like the `prowl` CLI, is not one.
   @Test func readsAProcessLaunchEnvironmentValue() throws {
