@@ -1,5 +1,23 @@
 # Changelog
 
+## [2026.9.29](https://github.com/onevcat/Prowl/releases/tag/v2026.9.29)
+
+This release adds workspace editing and more reliable status tracking for Codex sessions.
+
+### New
+
+- Edit existing workspaces from the sidebar workspace menu or **Edit Workspace** in the Command Palette. Change the title, description, task links, repository names and roles, or add, reorder, and remove repositories.
+- Create a workspace with just one repository and add more later. The workspace editor also supports Simplified Chinese.
+- Agent profile model suggestions now include GPT-6 models, Claude Fable 5.1, and Claude Opus 5.5.
+- Use `prowl list --json` to check pane visibility through the new `pane.visible` field, and find the calling pane through `caller`.
+
+### Fixed
+
+- Codex sessions started by typing `codex` now track working and idle states through the shared daemon, including subagent work and resumed conversations. Codex 0.158 footer layouts and folder trust prompts are also recognized correctly.
+- Commands run by Codex through its shared daemon now resolve to the correct pane, preventing agent signals, dispatch completions, and workflow actions from being attributed to another tab.
+- Agent Island keeps a consistent width when expanding or collapsing on external displays, and its full floating bar responds to hover.
+- Fixed a Canvas layout cleanup crash on older macOS Swift runtimes, including macOS 26.3.1.
+
 ## [2026.9.25](https://github.com/onevcat/Prowl/releases/tag/v2026.9.25)
 
 ### Improved
