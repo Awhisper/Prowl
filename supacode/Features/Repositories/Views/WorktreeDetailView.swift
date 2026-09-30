@@ -312,7 +312,6 @@ struct WorktreeDetailView: View {
     let showRunButton =
       state.showRunButtonInToolbar
       && (state.runScriptIsRunning || state.runScriptEnabled)
-    let overflowCommands = Array(state.customCommands.enumerated().dropFirst(3))
     // A fixed separator keeps the dynamic Run + Custom Command cluster distinct
     // from other trailing actions, mirroring the Normal toolbar spacing.
     //
@@ -336,59 +335,67 @@ struct WorktreeDetailView: View {
     if showRunButton || !state.customCommands.isEmpty {
       ToolbarSpacer(.fixed)
       ToolbarItem(placement: .primaryAction) {
-        // `spacing: 0` keeps the cluster as tight as the Normal toolbar's
-        // ToolbarItemGroup (whose buttons sit nearly flush on macOS 26); the
-        // buttons' own internal padding provides the visible gap.
-        HStack(spacing: 0) {
-          if showRunButton {
-            RunScriptToolbarButton(
-              isRunning: state.runScriptIsRunning,
-              isEnabled: state.runScriptEnabled,
-              runHelpText: AppShortcuts.helpText(
-                title: "Run Script",
-                commandID: AppShortcuts.CommandID.runScript,
-                in: store.resolvedKeybindings
-              ),
-              stopHelpText: AppShortcuts.helpText(
-                title: "Stop Script",
-                commandID: AppShortcuts.CommandID.stopScript,
-                in: store.resolvedKeybindings
-              ),
-              runShortcut: store.resolvedKeybindings.display(for: AppShortcuts.CommandID.runScript),
-              stopShortcut: store.resolvedKeybindings.display(
-                for: AppShortcuts.CommandID.stopScript),
-              runAction: { store.send(.runScript) },
-              stopAction: { store.send(.stopRunScript) }
-            )
-          }
-          ForEach(Array(state.customCommands.enumerated().prefix(3)), id: \.element.id) { _, command in
-            UserCustomCommandToolbarButton(
-              title: command.command.resolvedTitle,
-              systemImage: command.command.resolvedSystemImage,
-              source: command.source,
-              shortcut: store.resolvedKeybindings.display(
-                for: command.keybindingID
-              ),
-              isEnabled: command.command.hasRunnableCommand,
-              action: {
-                store.send(.runCustomCommand(command.id))
-              }
-            )
-          }
-          if !overflowCommands.isEmpty {
-            CustomCommandOverflowButton(
-              entries: overflowCommands.map { $0.element },
-              shortcutDisplay: { command in
-                store.resolvedKeybindings.display(for: command.keybindingID)
-              },
-              onRunCustomCommand: { id in
-                store.send(.runCustomCommand(id))
-              }
-            )
-          }
-        }
+        canvasCommandCluster(state: state, showRunButton: showRunButton)
       }
     }
+  }
+
+  @ViewBuilder
+  private func canvasCommandCluster(state: ToolbarSharedState, showRunButton: Bool) -> some View {
+    let overflowCommands = Array(state.customCommands.enumerated().dropFirst(3))
+    // NSToolbar gives each item of the Normal toolbar its own horizontal
+    // inset. This single item gets that inset only once, so the spacing and
+    // the outer padding add it back between and around the buttons to
+    // match the Normal toolbar.
+    HStack(spacing: CanvasCommandCluster.itemSpacing) {
+      if showRunButton {
+        RunScriptToolbarButton(
+          isRunning: state.runScriptIsRunning,
+          isEnabled: state.runScriptEnabled,
+          runHelpText: AppShortcuts.helpText(
+            title: "Run Script",
+            commandID: AppShortcuts.CommandID.runScript,
+            in: store.resolvedKeybindings
+          ),
+          stopHelpText: AppShortcuts.helpText(
+            title: "Stop Script",
+            commandID: AppShortcuts.CommandID.stopScript,
+            in: store.resolvedKeybindings
+          ),
+          runShortcut: store.resolvedKeybindings.display(for: AppShortcuts.CommandID.runScript),
+          stopShortcut: store.resolvedKeybindings.display(
+            for: AppShortcuts.CommandID.stopScript),
+          runAction: { store.send(.runScript) },
+          stopAction: { store.send(.stopRunScript) }
+        )
+      }
+      ForEach(Array(state.customCommands.enumerated().prefix(3)), id: \.element.id) { _, command in
+        UserCustomCommandToolbarButton(
+          title: command.command.resolvedTitle,
+          systemImage: command.command.resolvedSystemImage,
+          source: command.source,
+          shortcut: store.resolvedKeybindings.display(
+            for: command.keybindingID
+          ),
+          isEnabled: command.command.hasRunnableCommand,
+          action: {
+            store.send(.runCustomCommand(command.id))
+          }
+        )
+      }
+      if !overflowCommands.isEmpty {
+        CustomCommandOverflowButton(
+          entries: overflowCommands.map { $0.element },
+          shortcutDisplay: { command in
+            store.resolvedKeybindings.display(for: command.keybindingID)
+          },
+          onRunCustomCommand: { id in
+            store.send(.runCustomCommand(id))
+          }
+        )
+      }
+    }
+    .padding(.horizontal, CanvasCommandCluster.edgeInset)
   }
 
   /// The target pane's detected agent, feeding the Agents capsule. nil
@@ -1297,4 +1304,11 @@ struct WorktreeDetailView: View {
     }
     return nil
   }
+}
+
+/// Spacing that makes the single-item Canvas command cluster match the
+/// per-item insets of the Normal toolbar.
+private enum CanvasCommandCluster {
+  static let itemSpacing: CGFloat = 3.5
+  static let edgeInset: CGFloat = 3
 }
