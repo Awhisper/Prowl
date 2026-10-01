@@ -36,6 +36,7 @@ final class MirrorSession: Identifiable {
   private(set) var supportsHistory = false
   private(set) var supportsLaunch = false
   @ObservationIgnored private var supportsShellSend = false
+  @ObservationIgnored private var supportsAgentInput = false
   @ObservationIgnored private var pendingCommand: PendingCommand?
   @ObservationIgnored private var commandTimeout: Task<Void, Never>?
   @ObservationIgnored private let clock: any Clock<Duration>
@@ -45,12 +46,13 @@ final class MirrorSession: Identifiable {
     let continuation: CheckedContinuation<MirrorJSON, any Error>
   }
   private enum CommandFailure: LocalizedError {
-    case unavailable, disconnected, timedOut, shellUnavailable
+    case unavailable, disconnected, timedOut, shellUnavailable, agentInputUnavailable
     var errorDescription: String? {
       switch self {
       case .unavailable: "Host command service is unavailable or another command is pending."
       case .disconnected: "Connection lost before Host confirmed the command."
       case .timedOut: "Host did not confirm the command in time."
+      case .agentInputUnavailable: "Update Host to support interactive Agent input."
       case .shellUnavailable: "This Host does not support shell submission. Choose an Agent pane."
       }
     }
@@ -128,6 +130,7 @@ final class MirrorSession: Identifiable {
     status = .connecting
     supportsLaunch = false
     supportsShellSend = false
+    supportsAgentInput = false
     generation = UUID()
     let attempt = generation
     do {
@@ -277,7 +280,7 @@ final class MirrorSession: Identifiable {
     let request = Submission(
       id: UUID(), text: draft, paneID: pane.id, runID: hostRunID,
       draftRevision: draftRevision, configuration: configuration,
-      outcome: .init(status: .pending, detail: "Host is checking readiness and dispatching…"))
+      outcome: .init(status: .pending, detail: "Host is checking readiness and sending…"))
     submission = request
     Task { await routeSubmission(request, lease: subscriptionID) }
     let clock = clock
@@ -294,6 +297,7 @@ final class MirrorSession: Identifiable {
       guard status == .live, subscriptionID == lease, submission?.id == request.id else { return }
       let input = try MirrorInputRoute.command(
         listing: listing, paneID: request.paneID, text: request.text)
+      if case .agentsInput = input, !supportsAgentInput { throw CommandFailure.agentInputUnavailable }
       if case .send = input, !supportsShellSend { throw CommandFailure.shellUnavailable }
       send(
         .command(
@@ -314,12 +318,10 @@ final class MirrorSession: Identifiable {
     else { return }
     struct Result: Decodable {
       struct Payload: Decodable {
-        struct Dispatch: Decodable { let id: String }
         struct Input: Decodable {
           let bytes: Int
           let trailing_enter_sent: Bool
         }
-        let dispatch: Dispatch?
         let input: Input?
       }
       struct Failure: Decodable {
@@ -335,16 +337,11 @@ final class MirrorSession: Identifiable {
       markDeliveryUncertain()
       return
     }
-    if result.ok, let dispatch = result.data?.dispatch {
-      current.outcome = .init(
-        status: .accepted, detail: "Dispatched (" + dispatch.id + "). Agent completion is separate."
-      )
-      if current.draftRevision == draftRevision { draft = "" }
-    } else if result.ok, result.command == "send", let input = result.data?.input,
+    if result.ok, ["send", "agents.input"].contains(result.command ?? ""), let input = result.data?.input,
       input.bytes == current.text.utf8.count, input.trailing_enter_sent
     {
       current.outcome = .init(
-        status: .accepted, detail: "Sent to the shell. Command completion is separate.")
+        status: .accepted, detail: "Sent. Agent completion is separate.")
       if current.draftRevision == draftRevision { draft = "" }
     } else if let error = result.error,
       !["REMOTE_COMMAND_UNCONFIRMED", "DISPATCH_FAILED", "SEND_FAILED"].contains(error.code)
@@ -419,6 +416,7 @@ final class MirrorSession: Identifiable {
         return
       }
       supportsLaunch = message.capabilities?.contains("launch-profile") == true
+      supportsAgentInput = message.capabilities?.contains("agent-input") == true
       supportsShellSend = message.capabilities?.contains("shell-send") == true
       supportsRefresh = message.capabilities?.contains("refresh") == true
       supportsHistory = message.capabilities?.contains("history") == true

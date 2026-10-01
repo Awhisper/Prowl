@@ -217,7 +217,7 @@ object Commands {
                 .firstOrNull { canonical(it.record("pane").string("id")) == pane }
                 ?: throw IOException("Pane is no longer available")
         if (item.record("pane").optionalString("agent") != null)
-            return obj("agentsDispatch" to obj("_0" to obj("pane" to pane, "prompt" to text)))
+            return obj("agentsInput" to obj("_0" to obj("pane" to pane, "prompt" to text)))
         if (item.record("task").optionalString("status") != "idle")
             throw IOException("Shell is busy or its state is unknown")
         return obj(

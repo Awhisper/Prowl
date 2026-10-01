@@ -135,7 +135,14 @@ public CLI router. There is no special AI Control Console, bundled private contr
 skill, or separate agent-launch implementation. Profile settings determine model
 and permissions.
 
-Every Send first reads public `list`. A detected Agent uses public `agents dispatch`.
+Every Send first reads public `list`. A detected Agent uses structured `agentsInput`
+(`agents.input`), advertised by the `agent-input` capability. Update Host if this
+capability is missing; mobile clients never fall back to task dispatch.
+Interactive input delivers the message as written, without a `[Prowl]` prefix or a
+completion instruction. It creates no dispatch record and does not require
+`dispatch-complete`. An existing pending automation receipt is neither completed nor
+abandoned and does not block this human input, just as local typing does not settle
+an automation task. The usual Agent readiness and local input protections still apply.
 Host rechecks the exact subscribed pane and lease, plus input protection, before delivery.
 Mobile shell panes are read-only: Host cannot yet verify an empty shell command line,
 so structured shell Send is refused and its capability is not advertised. An idle task
@@ -143,14 +150,14 @@ can still contain an older local draft. Use an Agent Profile for mobile prompts,
 control the shell on Host. Local CLI `send` and Mac mirror keyboard input retain their
 existing direct-input behavior.
 
-Shared Agent dispatch rejects IME composition and recent Host editing. Claude must
+Shared Agent input delivery rejects IME composition and recent Host editing. Claude must
 have a recognized empty composer. It inserts text, waits up to two seconds for the
 paste echo, and only then sends Enter, provided the surface/Agent/edit revision is
 unchanged. Codex has an explicit idle-composer rule; the delivery boundary also
 checks formatter dim styling so a hint is not confused with an identically worded
 draft. Unknown layouts, wrapped drafts and attachments refuse delivery.
 
-A successful dispatch receipt confirms delivery, not Agent completion. Replies are
+A successful input receipt confirms delivery, not Agent completion. Replies are
 correlated by UUID. Unknown delivery preserves the draft and is not automatically
 replayed; reconnection queries the original request receipt on the same Host run.
 If delivery stops after paste but before Enter, text may remain in the Host composer;
@@ -158,7 +165,7 @@ check it before retrying.
 
 Host retains up to 1024 mutation receipts per App lifetime, and rejects further mutations
 when full. Catalog reads do not consume this budget. A retained mutation ID reused with
-different parameters is rejected. Takeover/disconnect cancels a dispatch still waiting for readiness. Explicit device revocation or Host stop
+different parameters is rejected. Takeover/disconnect cancels input still waiting for readiness. Explicit device revocation or Host stop
 also cancels pending Profile preparation, including requests whose connection was
 already lost. A plain disconnect alone does not cancel accepted Profile creation;
 check Host before retrying an uncertain result. Existing terminal programs continue.

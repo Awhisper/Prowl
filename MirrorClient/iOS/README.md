@@ -25,12 +25,14 @@ available Host Agent Profile. Host creates a normal background tab through its
 public CLI. Models and permissions come from that Profile. There is no separate
 AI Control Console. An uncertain creation is not repeated automatically.
 
-**Send** first reads public Host `list`. Detected Agents use `agents dispatch`.
+**Send** first reads public Host `list`. Detected Agents use `agentsInput`
+(`agent-input` capability), which delivers plain interactive text without task
+dispatch receipts. Older Hosts must be updated.
 The current Host does not permit structured Shell submission because it cannot
 confirm that the Shell input line is empty. The client preserves the draft and
 explains the refusal. Host validates the pane lease, readiness, drafts
 and IME/editing activity. Claude paste/Enter and Codex hint styling are checked in
-the shared Host path. Dispatch success is not Agent completion. Unknown delivery
+the shared Host path. Input delivery is not Agent completion. Unknown delivery
 preserves the draft and queries the original request receipt after reconnect;
 commands are never automatically replayed.
 
@@ -71,3 +73,7 @@ are separate from real Agent/cross-device acceptance.
 
 See the shared [wire contract](../../docs/remote-mirror-wire.md) and
 `ThirdPartyNotices/` for source/license notices.
+
+Ordinary Send requires Host capability `agent-input`. It does not add a completion
+prompt or create a pending dispatch; prior automation receipts remain unchanged.
+Delivery confirmation and reconnect receipt lookup remain separate from task success.

@@ -14,7 +14,7 @@
     static func launchCommand(_ command: MirrorCommandRequest.Command) async throws -> MirrorJSON {
       let payload: String
       switch command {
-      case .agentsDispatch, .send: throw CancellationError()
+      case .agentsInput, .agentsDispatch, .send: throw CancellationError()
       case .list:
         payload =
           #"{"ok":true,"data":{"items":[{"worktree":{"id":"fixture-worktree","name":"main","path":"/Projects/Prowl","root_path":"/Projects/Prowl"}}]}}"#
@@ -68,7 +68,7 @@
               .init(
                 panes: [pane],
                 capabilities: [
-                  "text-v1", "history", "refresh", "launch-profile", "agents-dispatch",
+                  "text-v1", "history", "refresh", "launch-profile", "agents-dispatch", "agent-input",
                   "shell-send",
                 ], hostRunID: UUID())))
         case .subscribe:
@@ -101,10 +101,12 @@
                 ])
               ]),
             ])
-          case .agentsDispatch:
+          case .agentsInput(let input):
             payload = .object([
-              "ok": .bool(true),
-              "data": .object(["dispatch": .object(["id": .string(UUID().uuidString)])]),
+              "ok": .bool(true), "command": .string("agents.input"),
+              "data": .object(["input": .object([
+                "bytes": .number(Double(input.prompt.utf8.count)), "trailing_enter_sent": .bool(true),
+              ])]),
             ])
           default:
             onClose?("Unexpected fixture command")

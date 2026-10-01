@@ -25,7 +25,7 @@ is no private AI console or dependency on personal shell wrappers.
 - Markdown emphasis/inline code, code fences and tables have readable previews;
   expanding code/table freezes the detail and supports copying the original text.
 - Multiline input sends only on Send or two physical Returns within 350 ms.
-  IME composition disables Send. Host checks Agent readiness through public dispatch;
+  IME composition disables Send. Host checks Agent readiness through shared interactive input;
   shell Send requires an explicit Host capability. Current Hosts refuse it because
   they cannot verify an empty command line; the draft remains available.
 - An unconfirmed delivery preserves the draft and blocks accidental resending.
@@ -69,3 +69,7 @@ The shared [wire contract](../../docs/remote-mirror-wire.md) is owned by Prowl. 
 protocol or 64-hex-code compatibility. Update both ends together.
 
 Source attribution and upstream terms: [ThirdPartyNotices](ThirdPartyNotices/README.md).
+
+Ordinary Send requires Host capability `agent-input`. It does not add a completion
+prompt or create a pending dispatch; prior automation receipts remain unchanged.
+Delivery confirmation and reconnect receipt lookup remain separate from task success.

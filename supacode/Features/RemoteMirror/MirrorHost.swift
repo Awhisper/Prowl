@@ -493,7 +493,7 @@ final class MirrorHost {
               panes: panes,
               capabilities: ["vt-v1", "text-v1", "takeover", "refresh"]
                 + (commandService != nil
-                  ? ["launch-profile", "launch-shell", "agents-dispatch"] : [])
+                  ? ["launch-profile", "launch-shell", "agents-dispatch", "agent-input"] : [])
                 + (source.supportsBoundedHistory ? ["history"] : []), hostRunID: hostRunID)))
       case .command:
         try handleCommand(message, peer: peer)

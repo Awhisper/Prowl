@@ -65,3 +65,20 @@ bounds backpressure; an ACK must exactly match its outstanding sequence.
 History ID/offset refer to one frozen snapshot, with fixed total and capture time.
 Pages cannot overlap, skip or exceed the total byte budget. Heartbeats run every
 two seconds; eight seconds without inbound traffic ends an established connection.
+
+## Interactive Agent input
+
+A Host advertising `agent-input` accepts structured `agentsInput` with the same
+`{pane, prompt}` payload as `agentsDispatch`. The pane must be a UUID owned by the
+current authenticated subscription. The command is routed as `agents.input`; it
+uses the shared Agent readiness and guarded paste/Enter path without creating or
+mutating task dispatch records or injecting completion instructions. `text-v1`
+remains the mobile representation. `agentsDispatch` retains its automation semantics.
+
+Success has `command: "agents.input"`, schema `prowl.cli.agents.input.v1`, and
+`data.input` containing UTF-8 `bytes`, `characters`, `source`, and
+`trailing_enter_sent`. Clients verify the submitted byte count and Enter flag before
+clearing that draft revision. Failed/uncertain delivery retains the draft;
+`SEND_FAILED` is uncertain, not permission to replay. Existing request-ID deduplication
+and `commandReceipt` recovery apply. A missing `agent-input` capability requires a
+Host update; clients must not silently fall back to `agentsDispatch` or raw input.

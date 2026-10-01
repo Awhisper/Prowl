@@ -360,6 +360,9 @@ class Session(
                 val listing = command(Commands.list())
                 if (lease != activeLease || submission != item) return@launch
                 val input = Commands.input(listing, item.pane, item.text)
+                check(!input.has("agentsInput") || "agent-input" in state.value.capabilities) {
+                    "Update Host to support interactive Agent input"
+                }
                 check(!input.has("send") || "shell-send" in state.value.capabilities) {
                     "Host cannot verify an empty command line for remote shell Send. Use an Agent Profile or control the shell on Host"
                 }
@@ -584,12 +587,11 @@ class Session(
         val data = response.getAsJsonObject("data")
         val accepted =
             response.flag("ok") &&
-                (data?.getAsJsonObject("dispatch")?.optionalString("id") != null ||
-                    (response.optionalString("command") == "send" &&
-                        data?.getAsJsonObject("input")?.let {
-                            it.integer("bytes") == s.text.toByteArray().size &&
-                                it.flag("trailing_enter_sent")
-                        } == true))
+                response.optionalString("command") in setOf("send", "agents.input") &&
+                data?.getAsJsonObject("input")?.let {
+                    it.integer("bytes") == s.text.toByteArray().size &&
+                        it.flag("trailing_enter_sent")
+                } == true
         val error = response.getAsJsonObject("error")
         val rejection =
             error?.optionalString("code")?.takeUnless {
@@ -602,7 +604,7 @@ class Session(
                     else if (rejection != null) Delivery.REJECTED else Delivery.UNKNOWN,
                 draft = if (accepted && it.draftRevision == s.revision) "" else it.draft,
                 hint =
-                    if (accepted) "Dispatched. Agent completion is separate."
+                    if (accepted) "Sent. Agent completion is separate."
                     else
                         error?.optionalString("message")
                             ?: "Delivery unconfirmed. Check Host before sending again.",

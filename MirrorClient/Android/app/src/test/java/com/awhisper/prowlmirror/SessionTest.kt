@@ -41,14 +41,14 @@ class SessionTest {
         val peer
             get() = peers.last()
 
-        fun ready() {
+        fun ready(interactive: Boolean = true) {
             peer.ready(host)
             peer.receive(
                 control(
                     "panes",
                     obj(
                         "panes" to listOf(pane),
-                        "capabilities" to listOf("text-v1", "launch-profile", "history", "refresh"),
+                        "capabilities" to (listOf("text-v1", "launch-profile", "history", "refresh") + if (interactive) listOf("agent-input") else emptyList()),
                         "hostRunID" to run,
                     ),
                 )
@@ -209,7 +209,7 @@ class SessionTest {
     }
 
     @Test
-    fun agentDispatchDoesNotRequireShellCapability() = runTest {
+    fun agentInputDoesNotRequireShellCapability() = runTest {
         val f = Fixture(backgroundScope)
         f.live()
         f.session.setDraft("Review")
@@ -219,8 +219,27 @@ class SessionTest {
         runCurrent()
         assertEquals(Delivery.PENDING, f.session.state.value.delivery)
         val request = f.peer.sent.last().payload().record("commandRequest")
-        assertTrue(request.record("request").record("command").has("agentsDispatch"))
+        assertTrue(request.record("request").record("command").has("agentsInput"))
         assertEquals(2, f.peer.sent.count { it.kind == "command" })
+        f.session.close()
+    }
+
+    @Test
+    fun oldHostNeverFallsBackToDispatch() = runTest {
+        val f = Fixture(backgroundScope)
+        f.session.connect()
+        f.ready(interactive = false)
+        f.session.choose(f.pane)
+        f.subscribed()
+        f.session.setDraft("hello")
+        f.session.submit()
+        runCurrent()
+        f.listing()
+        runCurrent()
+        assertEquals(Delivery.REJECTED, f.session.state.value.delivery)
+        assertEquals("hello", f.session.state.value.draft)
+        assertTrue(f.session.state.value.hint.contains("Update Host"))
+        assertEquals(1, f.peer.sent.count { it.kind == "command" })
         f.session.close()
     }
 
@@ -235,7 +254,7 @@ class SessionTest {
         runCurrent()
         val id = f.peer.sent.last().payload().record("commandRequest").string("requestID")
         f.session.setDraft("new draft")
-        f.answer(id, obj("ok" to true, "data" to obj("dispatch" to obj("id" to "accepted"))))
+        f.answer(id, obj("ok" to true, "command" to "agents.input", "data" to obj("input" to obj("bytes" to 5, "trailing_enter_sent" to true))))
         assertEquals(Delivery.ACCEPTED, f.session.state.value.delivery)
         assertEquals("new draft", f.session.state.value.draft)
         f.session.close()
