@@ -23,6 +23,8 @@ final class MirrorClient: Identifiable {
   private(set) var supportsShellLaunch = false
   private(set) var supportsHistory = true
   private(set) var supportsRemoteScroll = false
+  private(set) var supportsScrollState = false
+  private(set) var scrollBoundsState = MirrorScrollBoundsState()
   private(set) var supportsViewportText = false
   private(set) var viewportState = MirrorViewportState()
   let scrollState = MirrorScrollState()
@@ -83,7 +85,9 @@ final class MirrorClient: Identifiable {
     scrollState.reset()
     supportsRemoteScroll = false
     supportsViewportText = false
+    supportsScrollState = false
     viewportState = MirrorViewportState()
+    scrollBoundsState = MirrorScrollBoundsState()
     isSubscribed = false
     isConnecting = true
     let peer = makeConnection(configuration)
@@ -153,6 +157,12 @@ final class MirrorClient: Identifiable {
               return
             }
           }
+          if self.supportsScrollState {
+            do { try self.scrollBoundsState.didPresent(sequence: sequence) } catch {
+              self.peer?.close(String(localized: "Invalid Host scroll state."))
+              return
+            }
+          }
           self.scrollState.didPresent(sequence: sequence)
         }
         self.peer?.send(message)
@@ -163,7 +173,8 @@ final class MirrorClient: Identifiable {
         .subscribe(
           .init(
             paneID: pane.id, representation: .terminal, intent: resumeIntent,
-            includeViewportText: supportsViewportText ? true : nil))
+            includeViewportText: supportsViewportText ? true : nil,
+            includeScrollState: supportsScrollState ? true : nil))
       )
     } catch { peer?.close(error.localizedDescription) }
   }
@@ -179,6 +190,7 @@ final class MirrorClient: Identifiable {
     isLoadingHistory = false
     scrollState.reset()
     viewportState = MirrorViewportState()
+    scrollBoundsState = MirrorScrollBoundsState()
     isSubscribed = false
     subscriptionID = nil
     historyLines = []
@@ -203,12 +215,13 @@ final class MirrorClient: Identifiable {
           subscriptionID: subscriptionID)))
   }
 
-  var canScroll: Bool {
+  func canScroll(_ direction: MirrorMessage.ScrollDirection) -> Bool {
     isSubscribed && supportsRemoteScroll && !showsHistory && !scrollState.isLoading
+      && scrollBoundsState.canScroll(direction)
   }
 
   func scroll(_ direction: MirrorMessage.ScrollDirection) {
-    guard canScroll, let subscriptionID, let requestID = scrollState.begin() else { return }
+    guard canScroll(direction), let subscriptionID, let requestID = scrollState.begin() else { return }
     peer?.send(.scroll(.init(requestID: requestID, direction: direction, subscriptionID: subscriptionID)))
   }
 
@@ -231,6 +244,7 @@ final class MirrorClient: Identifiable {
       subscriptionID = id
       scrollState.reset()
       viewportState = MirrorViewportState()
+      scrollBoundsState = MirrorScrollBoundsState()
       historyID = nil
       historyLines = []
       historyOffset = 0
@@ -241,6 +255,8 @@ final class MirrorClient: Identifiable {
       receiveFrame(message)
     case .viewport:
       receiveViewport(message)
+    case .scrollState:
+      receiveScrollBounds(message)
     case .historyPage:
       if historyID == nil { historyPageGate = MirrorHistoryPageGate() }
       guard isLoadingHistory, message.subscriptionID == subscriptionID,
@@ -279,6 +295,15 @@ final class MirrorClient: Identifiable {
         return
       }
     }
+    if supportsScrollState {
+      do {
+        guard let sequence = message.sequence else { throw MirrorProtocolError.invalidMessage }
+        try scrollBoundsState.receiveFrame(sequence: sequence)
+      } catch {
+        peer?.close(String(localized: "Invalid Host scroll state."))
+        return
+      }
+    }
     isSubscribed = true
     replica.display(message)
   }
@@ -292,6 +317,18 @@ final class MirrorClient: Identifiable {
     }
     do { try viewportState.stage(payload) } catch {
       peer?.close(String(localized: "Invalid Host viewport frame."))
+    }
+  }
+
+  private func receiveScrollBounds(_ message: MirrorMessage) {
+    guard supportsScrollState, subscriptionID != nil, message.subscriptionID == subscriptionID,
+      case .scrollState(let payload) = message
+    else {
+      peer?.close(String(localized: "Unexpected Host scroll state."))
+      return
+    }
+    do { try scrollBoundsState.stage(payload) } catch {
+      peer?.close(String(localized: "Invalid Host scroll state."))
     }
   }
 
@@ -346,6 +383,7 @@ final class MirrorClient: Identifiable {
     supportsShellLaunch = message.capabilities?.contains("launch-shell") == true
     supportsHistory = message.capabilities?.contains("history") == true
     supportsRemoteScroll = message.capabilities?.contains("remote-scroll") == true
+    supportsScrollState = message.capabilities?.contains("scroll-state-v1") == true
     supportsViewportText = message.capabilities?.contains("viewport-text-v1") == true
     supportsTakeover = message.capabilities?.contains("takeover") == true
     isConnecting = false

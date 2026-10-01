@@ -66,6 +66,37 @@ struct MirrorProtocolTests {
     #expect(gate.offer(frame) == 4)
   }
 
+  @Test func scrollStatePreservesUnknownAndLeavesBinaryRepresentationsUnchanged() throws {
+    let lease = UUID()
+    for bounds in [MirrorScrollBounds(), .init(atTop: true, atBottom: false), .init(atTop: false, atBottom: true)] {
+      let message = MirrorMessage.scrollState(
+        .init(
+          atTop: bounds.atTop, atBottom: bounds.atBottom, sequence: 7, subscriptionID: lease))
+      let wire = try MirrorWire.encode(message)
+      let decoded = try MirrorWire.decode(wire.dropFirst(4))
+      #expect(decoded.kind == .scrollState)
+      #expect(decoded.subscriptionID == lease)
+      #expect(decoded.sequence == 7)
+      #expect(decoded.scrollBounds == bounds)
+    }
+    let frame = MirrorFrame(columns: 80, rows: 24, bytes: Data("screen".utf8))
+    var bounded = frame
+    bounded.scrollBounds = .init(atTop: false, atBottom: true)
+    #expect(
+      try MirrorWire.encode(.frame(.init(frame: frame, sequence: 1, subscriptionID: lease)))
+        == MirrorWire.encode(.frame(.init(frame: bounded, sequence: 1, subscriptionID: lease))))
+    let text = MirrorMessage.TextFramePayload(sequence: 1, text: "screen", subscriptionID: lease)
+    var boundedText = text
+    boundedText.scrollBounds = bounded.scrollBounds
+    #expect(try MirrorWire.encode(.textFrame(text)) == MirrorWire.encode(.textFrame(boundedText)))
+    let legacy = MirrorMessage.subscribe(.init(paneID: UUID(), representation: .text, intent: .ifFree))
+    #expect(try MirrorWire.decode(MirrorWire.encode(legacy).dropFirst(4)).includeScrollState == nil)
+    var gate = MirrorTextFrameGate()
+    #expect(gate.offer("screen") == 1)
+    try gate.acknowledge(1)
+    #expect(gate.offer("screen", scrollBounds: bounded.scrollBounds) == 2)
+  }
+
   @Test func refreshPreservesBackpressureAndSequence() throws {
     var gate = MirrorTextFrameGate()
     #expect(gate.offer("unchanged") == 1)

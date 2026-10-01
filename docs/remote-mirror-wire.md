@@ -99,6 +99,26 @@ takeover and a replacement subscription clear pending local waits. Duplicate IDs
 for the current pending or most recently completed scroll never inject input twice.
 No Agent dispatch or Agent-generated completion receipt participates in scrolling.
 
+## Scroll boundary metadata
+
+`scroll-state-v1` is additive and requires `includeScrollState: true` on subscribe.
+Only opted-in clients receive `scrollState` before every corresponding VT/text
+frame, carrying `subscriptionID`, `sequence`, and optional `atTop` / `atBottom`.
+Only `true` disables the relevant direction; null/missing means unknown. Clients
+commit state with the matching frame (after display relay acknowledgement on Mac),
+validate lease and sequence, and reset on replacement subscriptions. Boundary-only
+changes participate in frame change detection. Binary frame formats are unchanged.
+
+The Host derives native scrollback boundaries from existing SCREEN/ACTIVE geometry.
+Mouse-captured TUI input and ranges that cannot be proven return unknown. No-op
+scrolling is never treated as proof of reaching an application-owned boundary.
+
+The Mac display relay suppresses canonical DEC mode enables 1004, 2031 and 2048
+from snapshot replay. Focus, color and size reports belong to the original Host
+terminal; enabling them in a replica would manufacture input sent back to Host.
+Keyboard, paste and mouse input modes remain intact. This changes presentation,
+not remote frame encoding or the original terminal state.
+
 ## Native scrollback text for terminal clients
 
 `viewport-text-v1` is a separate additive capability. A terminal client opts in

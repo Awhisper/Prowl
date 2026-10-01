@@ -41,7 +41,7 @@ class SessionTest {
         val peer
             get() = peers.last()
 
-        fun ready(interactive: Boolean = true, remoteScroll: Boolean = false) {
+        fun ready(interactive: Boolean = true, remoteScroll: Boolean = false, scrollState: Boolean = false) {
             peer.ready(host)
             peer.receive(
                 control(
@@ -50,16 +50,17 @@ class SessionTest {
                         "panes" to listOf(pane),
                         "capabilities" to (listOf("text-v1", "launch-profile", "history", "refresh") +
                             (if (interactive) listOf("agent-input") else emptyList()) +
-                            (if (remoteScroll) listOf("remote-scroll") else emptyList())),
+                            (if (remoteScroll) listOf("remote-scroll") else emptyList()) +
+                            (if (scrollState) listOf("scroll-state-v1") else emptyList())),
                         "hostRunID" to run,
                     ),
                 )
             )
         }
 
-        fun live(remoteScroll: Boolean = false) {
+        fun live(remoteScroll: Boolean = false, scrollState: Boolean = false) {
             session.connect()
-            ready(remoteScroll = remoteScroll)
+            ready(remoteScroll = remoteScroll, scrollState = scrollState)
             session.choose(pane)
             subscribed()
         }
@@ -104,6 +105,83 @@ class SessionTest {
     }
 
     @Test
+    fun scrollBoundsAreOptedInAndCommitWithTheirFrame() = runTest {
+        val f = Fixture(backgroundScope)
+        f.live(remoteScroll = true, scrollState = true)
+        assertTrue(f.peer.sent.last { it.kind == "subscribe" }.payload().flag("includeScrollState"))
+        f.peer.receive(control("scrollState", obj(
+            "subscriptionID" to f.lease, "sequence" to 1, "atTop" to true, "atBottom" to false,
+        )))
+        assertTrue(f.session.state.value.canScrollRemote(ScrollDirection.UP))
+        f.peer.receive(Packet.Text(f.lease, 1, 80, 24, false, "same viewport"))
+        assertFalse(f.session.state.value.canScrollRemote(ScrollDirection.UP))
+        assertTrue(f.session.state.value.canScrollRemote(ScrollDirection.DOWN))
+        f.session.scrollRemote(ScrollDirection.UP)
+        assertFalse(f.peer.sent.any { it.kind == "scroll" })
+        f.peer.receive(control("scrollState", obj(
+            "subscriptionID" to f.lease, "sequence" to 2, "atTop" to false, "atBottom" to true,
+        )))
+        assertFalse(f.session.state.value.canScrollRemote(ScrollDirection.UP))
+        f.peer.receive(Packet.Text(f.lease, 2, 80, 24, false, "same viewport"))
+        assertTrue(f.session.state.value.canScrollRemote(ScrollDirection.UP))
+        assertFalse(f.session.state.value.canScrollRemote(ScrollDirection.DOWN))
+        f.session.scrollRemote(ScrollDirection.DOWN)
+        assertFalse(f.peer.sent.any { it.kind == "scroll" })
+        // Missing/null bounds mean unknown, never a boundary inferred from identical text.
+        val unknown = obj("subscriptionID" to f.lease, "sequence" to 3)
+        unknown.add("atBottom", com.google.gson.JsonNull.INSTANCE)
+        f.peer.receive(control("scrollState", unknown))
+        f.peer.receive(Packet.Text(f.lease, 3, 80, 24, false, "same viewport"))
+        assertTrue(f.session.state.value.canScrollRemote(ScrollDirection.UP))
+        assertTrue(f.session.state.value.canScrollRemote(ScrollDirection.DOWN))
+        f.session.close()
+    }
+
+    @Test
+    fun malformedOrUnpairedScrollStateDisconnects() = runTest {
+        for (failure in listOf("missing", "wrong-lease", "wrong-sequence", "duplicate", "invalid-flag", "stale")) {
+            val f = Fixture(backgroundScope)
+            f.live(remoteScroll = true, scrollState = true)
+            val payload = obj("subscriptionID" to f.lease, "sequence" to 1, "atTop" to true)
+            when (failure) {
+                "wrong-lease" -> payload.addProperty("subscriptionID", uuid())
+                "wrong-sequence" -> payload.addProperty("sequence", 2)
+                "invalid-flag" -> payload.addProperty("atTop", "true")
+                "stale" -> payload.addProperty("sequence", 0)
+            }
+            if (failure != "missing") f.peer.receive(control("scrollState", payload))
+            if (failure == "duplicate") f.peer.receive(control("scrollState", payload))
+            f.peer.receive(Packet.Text(f.lease, 1, 80, 24, false, "screen"))
+            assertEquals(failure, Status.disconnected, f.session.state.value.status)
+            assertTrue(f.peer.stopped)
+            f.session.close()
+        }
+    }
+
+    @Test
+    fun scrollBoundsResetOnReconnectAndOlderHostsNeedNoMetadata() = runTest {
+        val f = Fixture(backgroundScope)
+        f.live(remoteScroll = true, scrollState = true)
+        f.peer.receive(control("scrollState", obj(
+            "subscriptionID" to f.lease, "sequence" to 1, "atTop" to true, "atBottom" to true,
+        )))
+        f.peer.receive(Packet.Text(f.lease, 1, 80, 24, false, "screen"))
+        assertFalse(f.session.state.value.canScrollRemote(ScrollDirection.UP))
+        f.peer.receive(control("scrollState", obj("subscriptionID" to f.lease, "sequence" to 2)))
+        f.peer.closed("Network lost")
+        assertEquals(ScrollBounds(), f.session.state.value.scrollBounds)
+        f.session.retry()
+        f.ready(remoteScroll = true)
+        assertFalse(f.peer.sent.last { it.kind == "subscribe" }.payload().has("includeScrollState"))
+        f.subscribed()
+        f.peer.receive(Packet.Text(f.lease, 1, 80, 24, false, "screen"))
+        assertEquals(Status.live, f.session.state.value.status)
+        assertTrue(f.session.state.value.canScrollRemote(ScrollDirection.UP))
+        assertTrue(f.session.state.value.canScrollRemote(ScrollDirection.DOWN))
+        f.session.close()
+    }
+
+    @Test
     fun remoteScrollRequiresCapabilityAndLiveView() = runTest {
         val f = Fixture(backgroundScope)
         f.live()
@@ -141,6 +219,8 @@ class SessionTest {
         )))
         assertNull(f.session.state.value.scrolling)
         assertEquals(ScrollDirection.UP, f.session.state.value.scrollCompletion?.direction)
+        assertTrue(f.session.state.value.canScrollRemote(ScrollDirection.UP))
+        assertTrue(f.session.state.value.canScrollRemote(ScrollDirection.DOWN))
         assertFalse(f.session.state.value.follow)
         assertEquals(Status.live, f.session.state.value.status)
         advanceTimeBy(6_000)

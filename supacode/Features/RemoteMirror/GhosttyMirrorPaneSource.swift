@@ -38,6 +38,7 @@ final class GhosttyMirrorPaneSource: MirrorPaneSource {
   }
 
   var supportsViewportText: Bool { true }
+  var supportsScrollState: Bool { true }
 
   func snapshot(_ id: UUID) throws -> MirrorFrame {
     guard let terminal = view(id)?.surface else { throw MirrorProtocolError.invalidMessage }
@@ -56,7 +57,8 @@ final class GhosttyMirrorPaneSource: MirrorPaneSource {
     guard try captureGeometry(terminal) == geometry else { throw MirrorPaneSourceError.captureChanged }
     return MirrorFrame(
       columns: geometry.columns, rows: geometry.rows,
-      bytes: Data(bytes: bytes, count: Int(text.text_len)), viewportText: viewportText)
+      bytes: Data(bytes: bytes, count: Int(text.text_len)), viewportText: viewportText,
+      scrollBounds: geometry.scrollBounds)
   }
 
   func write(_ bytes: Data, to id: UUID) throws {
@@ -118,7 +120,7 @@ final class GhosttyMirrorPaneSource: MirrorPaneSource {
     let geometry = try captureGeometry(terminal)
     let text = try viewportText(terminal, columns: geometry.columns, rows: geometry.rows, preserveRows: false)
     guard try captureGeometry(terminal) == geometry else { throw MirrorPaneSourceError.captureChanged }
-    return .init(text: text, columns: geometry.columns, rows: geometry.rows)
+    return .init(text: text, columns: geometry.columns, rows: geometry.rows, scrollBounds: geometry.scrollBounds)
   }
 
   private struct Probe: Equatable {
@@ -131,6 +133,15 @@ final class GhosttyMirrorPaneSource: MirrorPaneSource {
     let columns: UInt32
     let rows: UInt32
     let active: Probe
+    let screen: Probe
+    let mouseCaptured: Bool
+
+    var scrollBounds: MirrorScrollBounds? {
+      // Only native scrollback has a provable range. An unscrolled screen with
+      // no retained rows may be an alternate-screen TUI with its own history.
+      guard !mouseCaptured, active.isScrolled || screen.pixelY < 0 else { return nil }
+      return .init(atTop: screen.pixelY >= 0 && screen.offset == 0, atBottom: !active.isScrolled)
+    }
   }
 
   private func captureGeometry(_ terminal: ghostty_surface_t) throws -> CaptureGeometry {
@@ -139,13 +150,16 @@ final class GhosttyMirrorPaneSource: MirrorPaneSource {
       throw MirrorProtocolError.invalidMessage
     }
     let active = try probe(terminal, tag: GHOSTTY_POINT_ACTIVE, coordinate: GHOSTTY_POINT_COORD_EXACT)
+    let screen = try probe(terminal, tag: GHOSTTY_POINT_SCREEN, coordinate: GHOSTTY_POINT_COORD_EXACT)
     let bottom = try probe(terminal, tag: GHOSTTY_POINT_VIEWPORT, coordinate: GHOSTTY_POINT_COORD_BOTTOM_RIGHT)
     let columns = UInt32(size.columns)
     let rows = UInt32(size.rows)
     // Surface dimensions can advance before the terminal IO thread applies a
     // resize. The viewport's final cell verifies the terminal grid itself.
     guard bottom.pixelY >= 0, bottom.offset == columns * rows - 1 else { throw MirrorPaneSourceError.captureChanged }
-    return .init(columns: columns, rows: rows, active: active)
+    return .init(
+      columns: columns, rows: rows, active: active, screen: screen,
+      mouseCaptured: ghostty_surface_mouse_captured(terminal))
   }
 
   private func probe(

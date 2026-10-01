@@ -49,10 +49,14 @@ data class SessionState(
     val follow: Boolean = true,
     val scrolling: ScrollDirection? = null,
     val scrollCompletion: ScrollCompletion? = null,
+    val scrollBounds: ScrollBounds = ScrollBounds(),
 ) {
     val canScrollRemote: Boolean
         get() = status == Status.live && "remote-scroll" in capabilities &&
             !showsHistory && scrolling == null
+
+    fun canScrollRemote(direction: ScrollDirection): Boolean =
+        canScrollRemote && scrollBounds.allows(direction)
 
     val canSend: Boolean
         get() =
@@ -147,6 +151,9 @@ class Session(
         val sequence: Long,
     )
     private var scrollRequest: ScrollRequest? = null
+    private data class PendingScrollState(val sequence: Long, val bounds: ScrollBounds)
+    private var pendingScrollState: PendingScrollState? = null
+    private var expectsScrollState = false
 
     private data class Submission(
         val id: String,
@@ -228,6 +235,9 @@ class Session(
 
     private fun detach() {
         clearScroll()
+        pendingScrollState = null
+        expectsScrollState = false
+        state.update { it.copy(scrollBounds = ScrollBounds()) }
         historyTimeout?.cancel()
         state.update { it.copy(loadingHistory = false) }
         generation++
@@ -338,11 +348,16 @@ class Session(
         clearScroll()
         val pane = state.value.pane ?: return
         lease = null
-        state.update { it.copy(status = Status.subscribing, sequence = 0) }
+        pendingScrollState = null
+        expectsScrollState = "scroll-state-v1" in state.value.capabilities
+        state.update { it.copy(status = Status.subscribing, sequence = 0, scrollBounds = ScrollBounds()) }
         send(
             control(
                 "subscribe",
-                obj("paneID" to pane.id, "representation" to "text-v1", "intent" to intent),
+                obj(
+                    "paneID" to pane.id, "representation" to "text-v1", "intent" to intent,
+                    "includeScrollState" to true.takeIf { expectsScrollState },
+                ),
             )
         )
     }
@@ -484,7 +499,7 @@ class Session(
 
     fun scrollRemote(direction: ScrollDirection) {
         val active = lease ?: return
-        if (!state.value.canScrollRemote) return
+        if (!state.value.canScrollRemote(direction)) return
         val request = ScrollRequest(uuid(), active, direction, state.value.sequence)
         scrollRequest = request
         state.update {
@@ -525,6 +540,18 @@ class Session(
         state.update { it.copy(scrollCompletion = ScrollCompletion(request.id, request.direction)) }
     }
 
+    private fun receiveScrollState(p: JsonObject) {
+        require(expectsScrollState && state.value.status == Status.live &&
+            canonical(p.string("subscriptionID")) == lease) { "Unexpected scroll state" }
+        val sequence = p.longInteger("sequence")
+        require(pendingScrollState == null && sequence > state.value.sequence) {
+            "Invalid scroll state sequence"
+        }
+        pendingScrollState = PendingScrollState(
+            sequence, ScrollBounds(p.optionalFlag("atTop"), p.optionalFlag("atBottom")),
+        )
+    }
+
     private fun receive(packet: Packet) {
         if (packet is Packet.Text) {
             require(packet.text.toByteArray().size <= 1024 * 1024) {
@@ -537,8 +564,17 @@ class Session(
             ) {
                 "Invalid frame lease or sequence"
             }
+            val bounds = if (expectsScrollState) {
+                val pending = pendingScrollState
+                require(pending != null && pending.sequence == packet.sequence) {
+                    "Text frame has no matching scroll state"
+                }
+                pending.bounds
+            } else ScrollBounds()
+            pendingScrollState = null
             state.update {
                 it.copy(
+                    scrollBounds = bounds,
                     text = packet.text,
                     sequence = packet.sequence,
                     truncated = packet.truncated,
@@ -568,6 +604,7 @@ class Session(
             }
             "subscribed" -> {
                 clearScroll()
+                pendingScrollState = null
                 require(canonical(p.string("paneID")) == state.value.pane?.id)
                 lease = canonical(p.string("subscriptionID"))
                 runID = canonical(p.string("hostRunID"))
@@ -578,6 +615,7 @@ class Session(
                     it.copy(
                         status = Status.live,
                         error = null,
+                        scrollBounds = ScrollBounds(),
                         history = emptyList(),
                         historyOffset = 0,
                         historyTime = null,
@@ -624,6 +662,7 @@ class Session(
                 }
             }
             "scrollResult" -> scrollResult(p)
+            "scrollState" -> receiveScrollState(p)
             "historyPage" -> {
                 require(
                     canonical(p.string("subscriptionID")) == lease && state.value.loadingHistory

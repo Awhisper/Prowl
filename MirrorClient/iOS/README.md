@@ -49,10 +49,11 @@ Each pane keeps separate live/history reading positions. Erased transient output
 is not archived. Ghostty is not embedded in this client.
 
 On Hosts advertising `remote-scroll`, **Scroll Up** and **Scroll Down** move the
-Host pane by a small, bounded scroll amount. Pull downward past the top of the live text, or
-upward past its bottom, for the same action. Ordinary scrolling within the local
-text remains local, and long presses keep native text selection. These controls
-operate the Host's current terminal/application view; they are separate from History,
+Host pane by a small, bounded scroll amount. The two buttons sit above the live
+screen. Swipes only move the local reader, including at either edge, and long
+presses keep native text selection. The bottom Follow latest controls remain
+local reading controls. The remote scroll buttons operate the Host's current
+terminal/application view; they are separate from History,
 whose frozen snapshots and paging are unchanged.
 Applications decide how terminal scroll input is handled, so the exact distance
 can vary. Remote scrolling changes the view seen on Host as well.
@@ -63,7 +64,14 @@ scrolls are never replayed automatically. A fresh capture does not prove that th
 application moved, including when it is already at the beginning or end. Following
 latest text pauses during remote scrolling. After scrolling up, the local reader
 starts at the top of the returned screen; after scrolling down, it starts at the
-bottom. Older Hosts keep working with remote scroll controls disabled.
+bottom. Hosts without `remote-scroll` keep those two controls disabled.
+
+Hosts advertising `scroll-state-v1` send explicit scroll boundaries with each
+screen after the client opts in. The matching screen commits those boundaries:
+Scroll Up is disabled at a known top, and Scroll Down at a known bottom. Unknown
+boundaries, including application-managed TUI scrolling, leave both directions
+available. Unchanged screen text is never treated as proof of a boundary. Older
+Hosts with `remote-scroll` but no boundary capability still support both buttons.
 
 The composer is one line when unfocused, expands while editing, then scrolls at its
 height limit. Send is explicit; Return inserts a newline. Two physical Returns

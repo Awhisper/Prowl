@@ -698,6 +698,85 @@ struct MirrorHostTests {
     #expect(host.subscriberCount == 1)
   }
 
+  @Test(.timeLimit(.minutes(1)), arguments: [MirrorMessage.Representation.terminal, .text], [false, true])
+  func scrollStateRequiresOptInAndTracksBoundaryOnlyChanges(
+    representation: MirrorMessage.Representation, optedIn: Bool
+  ) async throws {
+    let source = Source()
+    source.scrollBounds = .init(atTop: false, atBottom: true)
+    let clock = TestClock()
+    let host = MirrorHost(
+      source: source, enabled: true, clock: clock, loadIdentity: { Self.identity }, saveIdentity: { _ in })
+    host.address = "127.0.0.1"
+    host.port = String(try MirrorTestPort.unusedPort())
+    defer { host.stop() }
+    try await MirrorTestPort.startHost(host)
+    let peer = try await Peer(port: UInt16(host.port)!, key: host.pairingKey)
+    defer { peer.connection.close() }
+    var messages = peer.messages.makeAsyncIterator()
+    peer.connection.send(.list)
+    #expect(await messages.next()?.capabilities?.contains("scroll-state-v1") == true)
+    peer.connection.send(
+      .subscribe(
+        .init(
+          paneID: source.id, representation: representation, intent: .ifFree, includeScrollState: optedIn)))
+    let lease = try #require(await messages.next()?.subscriptionID)
+    if optedIn {
+      let state = try #require(await messages.next())
+      #expect(state.kind == .scrollState)
+      #expect(state.scrollBounds == source.scrollBounds)
+      #expect(state.sequence == 1)
+      #expect(state.subscriptionID == lease)
+    }
+    let first = try #require(await messages.next())
+    #expect(first.kind == (representation == .text ? .textFrame : .frame))
+    peer.connection.send(.acknowledge(.init(sequence: 1, subscriptionID: lease)))
+    peer.connection.send(.list)
+    #expect(await messages.next()?.kind == .panes)
+    source.scrollBounds = .init(atTop: true, atBottom: false)
+    await clock.advance(by: .milliseconds(200))
+    if optedIn {
+      #expect(await messages.next()?.scrollBounds == source.scrollBounds)
+      let changed = try #require(await messages.next())
+      #expect(changed.sequence == 2)
+      #expect(changed.frame == first.frame)
+      #expect(changed.text == first.text)
+      peer.connection.send(.acknowledge(.init(sequence: 2, subscriptionID: lease)))
+      peer.connection.send(.list)
+      #expect(await messages.next()?.kind == .panes)
+      source.scrollBounds = nil
+      await clock.advance(by: .milliseconds(200))
+      let unknown = try #require(await messages.next())
+      #expect(unknown.kind == .scrollState)
+      #expect(unknown.scrollBounds == .init())
+      #expect(unknown.sequence == 3)
+      #expect(await messages.next()?.sequence == 3)
+    }
+    peer.connection.send(.list)
+    #expect(await messages.next()?.kind == .panes)
+  }
+
+  @Test(.timeLimit(.minutes(1))) func sourceWithoutScrollStateIgnoresOptIn() async throws {
+    let source = Source()
+    source.supportsScrollState = false
+    let host = MirrorHost(source: source, enabled: true, loadIdentity: { Self.identity }, saveIdentity: { _ in })
+    host.address = "127.0.0.1"
+    host.port = String(try MirrorTestPort.unusedPort())
+    defer { host.stop() }
+    try await MirrorTestPort.startHost(host)
+    let peer = try await Peer(port: UInt16(host.port)!, key: host.pairingKey)
+    defer { peer.connection.close() }
+    var messages = peer.messages.makeAsyncIterator()
+    peer.connection.send(.list)
+    #expect(await messages.next()?.capabilities?.contains("scroll-state-v1") == false)
+    peer.connection.send(
+      .subscribe(
+        .init(
+          paneID: source.id, representation: .text, intent: .ifFree, includeScrollState: true)))
+    #expect(await messages.next()?.kind == .subscribed)
+    #expect(await messages.next()?.kind == .textFrame)
+  }
+
   @MainActor private final class Source: MirrorPaneSource {
     let id = UUID()
     let otherID = UUID()
@@ -708,6 +787,8 @@ struct MirrorHostTests {
     var frameBytes = Data("thinking".utf8)
     var textUnavailable = false
     var supportsViewportText = true
+    var supportsScrollState = true
+    var scrollBounds: MirrorScrollBounds?
     var viewportText: String?
     var unstableCaptures = 0
     var supportsRemoteScroll = true
@@ -723,6 +804,9 @@ struct MirrorHostTests {
       reads += 1
       return text
     }
+    func textSnapshot(_ id: UUID) throws -> MirrorTextSnapshot {
+      .init(text: try activeText(id), scrollBounds: scrollBounds)
+    }
     func panes() -> [MirrorPaneDescriptor] {
       let primary = MirrorPaneDescriptor(id: id, title: "Fixture", directory: "/", busy: false)
       return includesOtherPane
@@ -734,7 +818,8 @@ struct MirrorHostTests {
         unstableCaptures -= 1
         throw MirrorPaneSourceError.captureChanged
       }
-      return MirrorFrame(columns: 80, rows: 24, bytes: frameBytes, viewportText: viewportText)
+      return MirrorFrame(
+        columns: 80, rows: 24, bytes: frameBytes, viewportText: viewportText, scrollBounds: scrollBounds)
     }
     func write(_ bytes: Data, to id: UUID) throws { input.append(bytes) }
     var supportsBoundedHistory: Bool { true }

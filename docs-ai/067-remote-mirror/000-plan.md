@@ -71,3 +71,5 @@ capability needed here. Browser clients are outside this implementation.
 - Updated 2026-10-01: Separate mobile interactive input from task receipts — see [009](009-interactive-input.md).
 - Updated 2026-10-01: QR enrollment for mobile clients — see [010-qr-pairing.md](010-qr-pairing.md).
 - Updated 2026-10-01: Preserve History and add direct remote viewport scrolling — see [011-remote-scroll.md](011-remote-scroll.md).
+
+- Updated 2026-10-01: Button-only scrolling, frame-matched boundaries and passive replica report handling — see [012](012-scroll-controls-and-report-feedback.md).

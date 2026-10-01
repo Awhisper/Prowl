@@ -51,7 +51,7 @@ nonisolated enum MirrorMessage: Codable, Sendable {
   enum Kind: String, Codable {
     case challenge, authenticate, pair, paired, authenticated, list, panes, subscribe, subscribed,
       frame, textFrame, acknowledge, input, history, historyPage, failure, ping, pong, ended,
-      refresh, command, commandResult, commandReceipt, scroll, scrollResult
+      refresh, command, commandResult, commandReceipt, scroll, scrollResult, scrollState
   }
   case list
   case panes(PanesPayload)
@@ -65,6 +65,7 @@ nonisolated enum MirrorMessage: Codable, Sendable {
     var paneID: UUID
     var representation: Representation
     var intent: Intent
+    var includeScrollState: Bool?
   }
   case subscribed(SubscribedPayload)
   struct SubscribedPayload: Codable, Sendable {
@@ -141,6 +142,13 @@ nonisolated enum MirrorMessage: Codable, Sendable {
     var sequence: UInt64
     var subscriptionID: UUID
   }
+  case scrollState(ScrollStatePayload)
+  struct ScrollStatePayload: Codable, Sendable {
+    var atTop: Bool?
+    var atBottom: Bool?
+    var sequence: UInt64
+    var subscriptionID: UUID
+  }
   case command(CommandPayload)
   struct CommandPayload: Codable, Sendable {
     var subscriptionID: UUID?
@@ -179,6 +187,7 @@ nonisolated enum MirrorMessage: Codable, Sendable {
     case .refresh: .refresh
     case .scroll: .scroll
     case .scrollResult: .scrollResult
+    case .scrollState: .scrollState
     case .command: .command
     case .commandResult: .commandResult
     case .commandReceipt: .commandReceipt
@@ -235,6 +244,7 @@ nonisolated enum MirrorMessage: Codable, Sendable {
     case .refresh(let payload): payload.subscriptionID
     case .scroll(let payload): payload.subscriptionID
     case .scrollResult(let payload): payload.subscriptionID
+    case .scrollState(let payload): payload.subscriptionID
     case .command(let payload): payload.subscriptionID
     case .commandReceipt(let payload): payload.subscriptionID
     default: nil
@@ -252,6 +262,7 @@ nonisolated enum MirrorMessage: Codable, Sendable {
     case .textFrame(let payload): payload.sequence
     case .acknowledge(let payload): payload.sequence
     case .scrollResult(let payload): payload.sequence
+    case .scrollState(let payload): payload.sequence
     default: nil
     }
   }

@@ -39,7 +39,7 @@ Ghostty, existing remote debug apps, or any physical device.
   selection cancellation, session-specific dialogs, session-owned launch state,
   and Unicode-safe detail chunking.
 
-## Remote scrolling validation (2026-10-01)
+## Initial remote scrolling validation (2026-10-01, before button-only revision)
 
 - Debug APK, instrumentation APK and lint succeeded with JDK 17 / Android SDK 34.
 - 37 JVM tests ran: 36 passed; the optional native TLS fixture was not running,
@@ -60,6 +60,34 @@ Ghostty, existing remote debug apps, or any physical device.
   `/tmp/prowl-android-scroll-ui-final-direct.log`. Loading, completed, long-text,
   History and error screenshots were inspected under
   `/tmp/prowl-android-scroll-screenshots/`.
+
+## Button-only scrolling and boundaries (2026-10-01)
+
+- Removed remote gesture recognition and its classifier. Live remote input is now
+  limited to the two top buttons; ordinary reading, edge pulls and selection remain
+  local. The bottom Follow latest control is unchanged.
+- Added opt-in `scroll-state-v1` metadata pairing. Only a matching lease/sequence
+  commits Host boundary flags with its text frame. Missing/null flags mean unknown;
+  an unchanged frame does not establish a boundary. New frames can re-enable either
+  direction, and disconnect/reconnect clears old flags and pending metadata.
+- JDK 17 / Android SDK 34: `:app:testDebugUnitTest :app:assembleDebug
+  :app:assembleDebugAndroidTest :app:lintDebug` succeeded. 40 JVM tests ran:
+  39 passed; the optional native TLS fixture test was skipped. Lint reported no
+  errors and 14 existing dependency/library warnings.
+- Unit coverage includes unknown/known bounds, direction-specific send guards,
+  capability opt-in, frame pairing, malformed flags, duplicate/stale/wrong-lease
+  metadata, missing/mismatched metadata, reconnect and older Hosts.
+- All 13 instrumentation tests passed on the isolated Android 16 phone emulator,
+  including eight scrolling cases. Actual Compose UI checks verify buttons above
+  the reading area, Follow latest below it, top/bottom disabled states and recovery,
+  local-only edge pulls/horizontal swipes/selection, loading/no-op completion,
+  local reading anchors, older Hosts and unchanged History.
+- The UI fixture injects Host messages through a fake transport; it does not claim
+  real Host/TLS or physical-device validation. The emulator ran read-only without
+  snapshots and was stopped afterward. No physical phone or real Host was touched.
+- Logs: `/tmp/prowl-android-buttons-final-build.log` and
+  `/tmp/prowl-android-buttons-ui.log` (`OK (13 tests)`). Boundary, loading and
+  long-text screenshots were inspected under `/tmp/prowl-android-buttons-screenshots/`.
 
 ## Not represented as passed
 

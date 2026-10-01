@@ -63,8 +63,7 @@ struct RemoteMirrorPaneView: View {
         if let view = client.replica.view {
           MirrorTerminalViewport(
             surface: view, displaySize: client.replica.displaySize, fitsWindow: fitsWindow,
-            viewportText: client.viewportState.text,
-            onRemoteScroll: client.supportsRemoteScroll && !client.showsHistory ? { client.scroll($0) } : nil
+            viewportText: client.viewportState.text
           )
           .opacity(client.showsHistory ? 0 : 1)
           .allowsHitTesting(!client.showsHistory)
@@ -174,15 +173,16 @@ struct RemoteMirrorPaneView: View {
       Button("Scroll Up", systemImage: "chevron.up") { client.scroll(.upward) }
         .help("Scroll the Host terminal up; distance depends on the running program")
         .accessibilityIdentifier("remote-mirror-scroll-up")
+        .disabled(!client.canScroll(.upward))
       Button("Scroll Down", systemImage: "chevron.down") { client.scroll(.downward) }
         .help("Scroll the Host terminal down; distance depends on the running program")
         .accessibilityIdentifier("remote-mirror-scroll-down")
+        .disabled(!client.canScroll(.downward))
     }
-    .disabled(!client.canScroll)
     .padding(.horizontal).padding(.vertical, 6)
     .help(
       client.supportsRemoteScroll
-        ? "Scroll controls the Host terminal. Hold Option while scrolling to pan the local display."
+        ? "Buttons scroll the Host terminal. Scrolling the display only pans locally."
         : "Update Host to enable remote scrolling.")
   }
 

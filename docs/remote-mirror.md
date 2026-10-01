@@ -99,18 +99,22 @@ A project that has never opened a terminal is not yet a pane, but its worktree i
 available in **New Pane…** on a current Host. The Host terminal owns the
 grid. Mac clients default to **Fit to Window**, shrinking the complete terminal to
 fit without changing the Host PTY. **Original Size** restores readable native-size
-glyphs with local panning (hold Option while scrolling when remote scrolling is available). It starts at the top; subsequent window resizes preserve
+glyphs with local panning. It starts at the top; subsequent window resizes preserve
 the manual scroll position within the available bounds. Large Host grids can make
 Fit to Window text small. iOS
 renders replacement text with local reflow. Cleared output is not an archive.
 
 On a Host advertising remote scrolling, **Scroll Up** and **Scroll Down** move
-the live Host terminal by a small wheel step. Mac vertical wheel/trackpad gestures
-use the same controls; one trackpad gesture requests one step. On phones, scroll
-the current text normally, then pull outward at the top for earlier content or
-at the bottom for later content. The new view stays at the corresponding edge.
-Buttons remain available
-when a gesture is inconvenient. Horizontal scrolling remains local.
+the live Host terminal by a small wheel step. These buttons sit above the live
+view on all clients. Wheel and touch gestures only move the local readable view;
+they never request remote scrolling. Follow latest remains below the mobile reader.
+
+A current Host sends frame-matched boundary state. **Scroll Up** is disabled at
+a known top and **Scroll Down** at a known bottom. Native terminal scrollback can
+provide these boundaries. Application-owned TUI history, or a screen whose range
+cannot be established, leaves them unknown and the buttons available. An unchanged
+frame does not prove a boundary. Older Hosts without boundary metadata keep both
+directions available when remote scrolling is supported.
 
 **Scrolling…** remains visible until a fresh Host frame confirms the request,
 or a five-second timeout ends the wait. A boundary that does not change the frame

@@ -6,6 +6,76 @@ import Testing
 
 @MainActor
 struct MirrorRemoteScrollTests {
+  @Test func boundariesCommitOnlyWithTheirFrameAndOnlyDisableTheKnownDirection() throws {
+    let channel = Channel(supportsScrollState: true)
+    let session = makeSession(channel)
+    #expect(channel.includedScrollState == true)
+    #expect(session.canScroll(.upward) && session.canScroll(.downward))
+
+    channel.state(2, atTop: true, atBottom: false)
+    #expect(session.canScroll(.upward))
+    channel.frame(2, includeState: false)
+    #expect(!session.canScroll(.upward) && session.canScroll(.downward))
+    session.scroll(.upward)
+    #expect(channel.requests.isEmpty)
+    session.scroll(.downward)
+    channel.atTop = false
+    channel.atBottom = true
+    channel.frame(3)
+    channel.result(try #require(channel.requests.last), sequence: 3)
+    #expect(session.canScroll(.upward) && !session.canScroll(.downward))
+    session.scroll(.downward)
+    #expect(channel.requests.count == 1)
+
+    channel.atTop = nil
+    channel.atBottom = nil
+    channel.frame(4)
+    #expect(session.text == "current")
+    #expect(session.canScroll(.upward) && session.canScroll(.downward))
+  }
+
+  @Test func staleBoundaryUpdatesCannotReplaceTheNextFrameOrSurviveReconnect() {
+    let channel = Channel(supportsScrollState: true)
+    let session = makeSession(channel)
+    let oldLease = channel.lease
+    channel.state(2, atTop: true, atBottom: true)
+    channel.state(1, atTop: false, atBottom: false)
+    channel.state(2, atTop: false, atBottom: false, lease: UUID())
+    channel.frame(2, includeState: false)
+    #expect(!session.canScroll(.upward) && !session.canScroll(.downward))
+
+    session.disconnect()
+    #expect(session.scrollAtTop == nil && session.scrollAtBottom == nil)
+    channel.supportsScrollState = false
+    session.retry()
+    #expect(channel.includedScrollState == nil)
+    #expect(session.canScroll(.upward) && session.canScroll(.downward))
+    channel.state(2, atTop: true, atBottom: true, lease: oldLease)
+    channel.frame(2)
+    #expect(session.canScroll(.upward) && session.canScroll(.downward))
+    #expect(session.status == .live)
+  }
+
+  @Test(arguments: [false, true]) func negotiatedHostMustSupplyMatchingStateBeforeEachFrame(mismatched: Bool) {
+    let channel = Channel(supportsScrollState: true)
+    let session = makeSession(channel)
+    if mismatched { channel.state(3, atTop: true) }
+    channel.frame(2, includeState: false)
+    #expect(session.status == .disconnected)
+    #expect(session.scrollAtTop == nil && session.scrollAtBottom == nil)
+    #expect(channel.closes == 1)
+  }
+
+  @Test func oldHostWithRemoteScrollKeepsBothDirectionsAvailable() throws {
+    let channel = Channel()
+    let session = makeSession(channel)
+    #expect(channel.includedScrollState == nil)
+    session.scroll(.upward)
+    channel.frame(2)
+    channel.result(try #require(channel.requests.last), sequence: 2)
+    #expect(session.canScroll(.upward) && session.canScroll(.downward))
+  }
+
   @Test func oldHostsAndHistoryNeverReceiveRemoteScroll() {
     let old = Channel(supportsScroll: false)
     let oldSession = makeSession(old)
@@ -177,21 +247,6 @@ struct MirrorRemoteScrollTests {
     #expect(session.completedScroll?.direction == .upward)
   }
 
-  @Test func edgeGestureLeavesInteriorHorizontalAndSmallDragsLocal() {
-    let top = MirrorRemoteScrollGesture(offset: 0, maximumOffset: 500)
-    let middle = MirrorRemoteScrollGesture(offset: 250, maximumOffset: 500)
-    let bottom = MirrorRemoteScrollGesture(offset: 500, maximumOffset: 500)
-    #expect(top.direction(translation: CGSize(width: 0, height: 80)) == .upward)
-    #expect(bottom.direction(translation: CGSize(width: 0, height: -80)) == .downward)
-    #expect(top.direction(translation: CGSize(width: 0, height: -80)) == nil)
-    #expect(bottom.direction(translation: CGSize(width: 0, height: 80)) == nil)
-    #expect(middle.direction(translation: CGSize(width: 0, height: 300)) == nil)
-    #expect(top.direction(translation: CGSize(width: 0, height: 40)) == nil)
-    #expect(top.direction(translation: CGSize(width: 100, height: 80)) == nil)
-    let short = MirrorRemoteScrollGesture(offset: 0, maximumOffset: 0)
-    #expect(short.direction(translation: CGSize(width: 0, height: -80)) == .downward)
-  }
-
   @Test func scrollJSONRoundTripsAndRejectsUnknownDirection() throws {
     let request = UUID()
     let lease = UUID()
@@ -211,6 +266,22 @@ struct MirrorRemoteScrollTests {
     #expect(decoded.sequence == 4)
     let failure = MirrorMessage.failure(.init(error: "SCROLL_BUSY", subscriptionID: lease, requestID: request))
     #expect(try MirrorWire.decode(MirrorWire.encode(failure).dropFirst(4)).scrollRequestID == request)
+    let state = MirrorMessage.scrollState(.init(atTop: true, atBottom: nil, sequence: 4, subscriptionID: lease))
+    let stateMessage = try MirrorWire.decode(MirrorWire.encode(state).dropFirst(4))
+    guard case .scrollState(let decodedState) = stateMessage else {
+      Issue.record("Expected scroll state")
+      return
+    }
+    #expect(decodedState.atTop == true && decodedState.atBottom == nil)
+    #expect(stateMessage.sequence == 4 && stateMessage.subscriptionID == lease)
+    let subscribe = MirrorMessage.subscribe(
+      .init(paneID: request, representation: .text, intent: .ifFree, includeScrollState: true))
+    let subscription = try MirrorWire.decode(MirrorWire.encode(subscribe).dropFirst(4))
+    guard case .subscribe(let payload) = subscription else {
+      Issue.record("Expected subscription")
+      return
+    }
+    #expect(payload.includeScrollState == true)
     let invalid = """
       {"scroll":{"_0":{"requestID":"\(request)","direction":"left","subscriptionID":"\(lease)"}}}
       """
@@ -245,11 +316,18 @@ struct MirrorRemoteScrollTests {
     var onMessage: ((MirrorMessage) -> Void)?
     var onClose: ((String?) -> Void)?
     let supportsScroll: Bool
+    var supportsScrollState: Bool
+    var includedScrollState: Bool?
+    var atTop: Bool?
+    var atBottom: Bool?
     let pane = MirrorPaneDescriptor(id: UUID(), title: "Scroll", directory: "/", busy: false)
     var lease = UUID()
     var requests: [UUID] = []
     var closes = 0
-    init(supportsScroll: Bool = true) { self.supportsScroll = supportsScroll }
+    init(supportsScroll: Bool = true, supportsScrollState: Bool = false) {
+      self.supportsScroll = supportsScroll
+      self.supportsScrollState = supportsScrollState
+    }
     func start() { onReady?() }
     func close(_ reason: String?) {
       closes += 1
@@ -261,9 +339,12 @@ struct MirrorRemoteScrollTests {
         onMessage?(
           .panes(
             .init(
-              panes: [pane], capabilities: ["text-v1", "history"] + (supportsScroll ? ["remote-scroll"] : []),
+              panes: [pane],
+              capabilities: ["text-v1", "history"] + (supportsScroll ? ["remote-scroll"] : [])
+                + (supportsScrollState ? ["scroll-state-v1"] : []),
               hostRunID: UUID())))
       case .subscribe:
+        if case .subscribe(let payload) = message { includedScrollState = payload.includeScrollState }
         lease = UUID()
         onMessage?(.subscribed(.init(paneID: pane.id, subscriptionID: lease, hostRunID: UUID())))
         frame(1)
@@ -272,8 +353,13 @@ struct MirrorRemoteScrollTests {
       default: break
       }
     }
-    func frame(_ sequence: UInt64) {
+    func frame(_ sequence: UInt64, includeState: Bool = true) {
+      if supportsScrollState && includeState { state(sequence, atTop: atTop, atBottom: atBottom) }
       onMessage?(.textFrame(.init(sequence: sequence, text: "current", subscriptionID: lease)))
+    }
+    func state(_ sequence: UInt64, atTop: Bool? = nil, atBottom: Bool? = nil, lease: UUID? = nil) {
+      onMessage?(
+        .scrollState(.init(atTop: atTop, atBottom: atBottom, sequence: sequence, subscriptionID: lease ?? self.lease)))
     }
     func result(_ id: UUID, sequence: UInt64) {
       onMessage?(.scrollResult(.init(requestID: id, sequence: sequence, subscriptionID: lease)))

@@ -84,15 +84,24 @@ class CoreTest {
     }
 
     @Test
-    fun onlyOutwardVerticalPullsAtTheStartingEdgeRequestRemoteScrolling() {
-        assertEquals(ScrollDirection.UP, remoteScrollDirection(5f, 70f, true, false, 56f))
-        assertEquals(ScrollDirection.DOWN, remoteScrollDirection(5f, -70f, false, true, 56f))
-        assertNull(remoteScrollDirection(5f, 30f, true, true, 56f))
-        assertNull(remoteScrollDirection(80f, 70f, true, true, 56f))
-        assertNull(remoteScrollDirection(0f, 70f, false, true, 56f))
-        assertNull(remoteScrollDirection(0f, -70f, true, false, 56f))
-        assertNull(remoteScrollDirection(0f, 100f, false, false, 56f))
-        assertNull(remoteScrollDirection(Float.NaN, 70f, true, true, 56f))
+    fun scrollStateUsesSwiftEnvelopeAndStrictOptionalBounds() {
+        val lease = "11111111-2222-3333-4444-555555555555"
+        val packet = control("scrollState", obj(
+            "atTop" to true, "atBottom" to false, "sequence" to 12, "subscriptionID" to lease,
+        ))
+        val encoded = Wire.encode(packet)
+        assertEquals(
+            "{\"scrollState\":{\"_0\":{\"atTop\":true,\"atBottom\":false,\"sequence\":12,\"subscriptionID\":\"$lease\"}}}",
+            String(encoded.drop(5).toByteArray()),
+        )
+        val payload = (Wire.read(ByteArrayInputStream(encoded)) as Packet.Control).payload()
+        assertEquals(true, payload.optionalFlag("atTop"))
+        assertEquals(false, payload.optionalFlag("atBottom"))
+        assertNull(payload.optionalFlag("missing"))
+        payload.add("atTop", com.google.gson.JsonNull.INSTANCE)
+        assertNull(payload.optionalFlag("atTop"))
+        assertThrows(Exception::class.java) { obj("atTop" to "true").optionalFlag("atTop") }
+        assertThrows(Exception::class.java) { obj("atTop" to 1).optionalFlag("atTop") }
     }
 
     @Test

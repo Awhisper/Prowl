@@ -58,6 +58,7 @@
       private var sequence: UInt64 = 0
       private var scrollPage = 0
       private var scrollTask: Task<Void, Never>?
+      private var includesScrollState = false
 
       func start() { onReady?() }
       func close(_ reason: String?) {
@@ -74,9 +75,12 @@
                 panes: [pane],
                 capabilities: [
                   "text-v1", "history", "refresh", "launch-profile", "agents-dispatch", "agent-input",
-                  "shell-send", "remote-scroll",
-                ], hostRunID: UUID())))
+                  "shell-send",
+                ] + (CommandLine.arguments.contains("--mirror-ui-no-scroll-fixture") ? [] : ["remote-scroll"])
+                  + (CommandLine.arguments.contains("--mirror-ui-scroll-boundary-fixture") ? ["scroll-state-v1"] : []),
+                hostRunID: UUID())))
         case .subscribe:
+          if case .subscribe(let payload) = message { includesScrollState = payload.includeScrollState == true }
           onMessage?(
             .subscribed(.init(paneID: pane.id, subscriptionID: lease, hostRunID: run)))
           frame()
@@ -157,17 +161,23 @@
       private func completeScroll(_ message: MirrorMessage) {
         guard let id = message.scrollRequestID, let direction = message.scrollDirection else { return }
         scrollPage += direction == .upward ? -1 : 1
+        if includesScrollState { scrollPage = min(0, max(-2, scrollPage)) }
         frame()
         onMessage?(.scrollResult(.init(requestID: id, sequence: sequence, subscriptionID: lease)))
       }
 
       private func frame() {
         sequence += 1
+        if includesScrollState {
+          onMessage?(
+            .scrollState(
+              .init(atTop: scrollPage == -2, atBottom: scrollPage == 0, sequence: sequence, subscriptionID: lease)))
+        }
         if CommandLine.arguments.contains("--mirror-ui-scroll-fixture") {
           let text =
             CommandLine.arguments.contains("--mirror-ui-scroll-long-fixture")
             ? (1...40).map { "```text\nRemote \(scrollPage) marker \($0)\n```" }.joined(separator: "\n")
-            : "Remote page \(scrollPage)\nPull past the text edge to scroll the Host."
+            : "Remote page \(scrollPage)\nUse the buttons above to scroll the Host."
           onMessage?(
             .textFrame(
               .init(

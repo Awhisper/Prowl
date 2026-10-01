@@ -24,6 +24,7 @@ class RemoteScrollTest {
     private val sent = mutableListOf<Packet.Control>()
     private val lease = uuid()
     private var sequence = 1L
+    private var includesScrollState = false
 
     @After
     fun close() {
@@ -33,7 +34,12 @@ class RemoteScrollTest {
         }
     }
 
-    private fun show(text: String = "Current viewport\nReady for remote scrolling.", capability: Boolean = true) {
+    private fun show(
+        text: String = "Current viewport\nReady for remote scrolling.",
+        capability: Boolean = true,
+        scrollState: Boolean = false,
+    ) {
+        includesScrollState = scrollState
         val host = Host("test-host")
         val pane = Pane(uuid(), "Scroll test", "/test", false)
         val run = uuid()
@@ -51,13 +57,17 @@ class RemoteScrollTest {
             ready(host)
             receive(control("panes", obj(
                 "panes" to listOf(pane),
-                "capabilities" to listOfNotNull("text-v1", "history", "remote-scroll".takeIf { capability }),
+                "capabilities" to listOfNotNull(
+                    "text-v1", "history", "remote-scroll".takeIf { capability },
+                    "scroll-state-v1".takeIf { scrollState },
+                ),
                 "hostRunID" to run,
             )))
             session.choose(pane)
             receive(control("subscribed", obj(
                 "paneID" to pane.id, "subscriptionID" to lease, "hostRunID" to run,
             )))
+            if (includesScrollState) bounds(sequence)
             receive(Packet.Text(lease, sequence, 80, 24, false, text))
             session.setFollow(false)
             model = MirrorModel(rule.activity.application)
@@ -67,9 +77,17 @@ class RemoteScrollTest {
         rule.setContent { MirrorApp(model) }
     }
 
+    private fun bounds(sequence: Long, atTop: Boolean? = null, atBottom: Boolean? = null) {
+        receive(control("scrollState", obj(
+            "subscriptionID" to lease, "sequence" to sequence,
+            "atTop" to atTop, "atBottom" to atBottom,
+        )))
+    }
+
     private fun complete(text: String = session.state.value.text) {
         rule.runOnIdle {
             val request = sent.last { it.kind == "scroll" }.payload()
+            if (includesScrollState) bounds(sequence + 1)
             receive(Packet.Text(lease, ++sequence, 80, 24, false, text))
             receive(control("scrollResult", obj(
                 "subscriptionID" to lease,
@@ -90,6 +108,11 @@ class RemoteScrollTest {
     @Test
     fun buttonsShowLoadingAndUnchangedFrameFinishesWithoutDisconnect() {
         show()
+        val outputBounds = rule.onNodeWithTag("mirror-output").fetchSemanticsNode().boundsInRoot
+        val upBounds = rule.onNodeWithText("Scroll up").fetchSemanticsNode().boundsInRoot
+        val followBounds = rule.onNodeWithText("Follow latest").fetchSemanticsNode().boundsInRoot
+        assertTrue(upBounds.bottom <= outputBounds.top)
+        assertTrue(followBounds.top >= outputBounds.bottom)
         rule.onNodeWithText("Scroll up").assertIsEnabled().performClick()
         rule.onNodeWithText("Scroll up").assertIsNotEnabled()
         rule.onNodeWithText("Scroll down").assertIsNotEnabled()
@@ -112,23 +135,46 @@ class RemoteScrollTest {
     }
 
     @Test
-    fun edgePullsSendOneRequestAndHorizontalSmallAndBusyGesturesDoNot() {
+    fun hostBoundsDisableOnlyTheirDirectionAndRestoreOnNewFrames() {
+        show(scrollState = true)
+        rule.onNodeWithText("Scroll up").assertIsEnabled()
+        rule.onNodeWithText("Scroll down").assertIsEnabled()
+        rule.runOnIdle { bounds(sequence + 1, atTop = true, atBottom = false) }
+        rule.onNodeWithText("Scroll up").assertIsEnabled()
+        rule.runOnIdle {
+            receive(Packet.Text(lease, ++sequence, 80, 24, false, session.state.value.text))
+        }
+        rule.onNodeWithText("Scroll up").assertIsNotEnabled()
+        rule.onNodeWithText("Scroll down").assertIsEnabled()
+        screenshot("at-top")
+        rule.runOnIdle {
+            bounds(sequence + 1, atTop = false, atBottom = true)
+            receive(Packet.Text(lease, ++sequence, 80, 24, false, session.state.value.text))
+        }
+        rule.onNodeWithText("Scroll up").assertIsEnabled()
+        rule.onNodeWithText("Scroll down").assertIsNotEnabled()
+        screenshot("at-bottom")
+        rule.runOnIdle {
+            bounds(sequence + 1)
+            receive(Packet.Text(lease, ++sequence, 80, 24, false, session.state.value.text))
+        }
+        rule.onNodeWithText("Scroll down").assertIsEnabled()
+        rule.onNodeWithText("Scroll up").assertIsEnabled().performClick()
+        complete()
+        rule.onNodeWithText("Scroll up").assertIsEnabled()
+        rule.runOnIdle { assertEquals(1, sent.count { it.kind == "scroll" }) }
+    }
+
+    @Test
+    fun edgePullsAndHorizontalGesturesNeverScrollTheRemotePane() {
         show()
         val output = rule.onNodeWithTag("mirror-output")
         output.performTouchInput { swipe(Offset(width * .8f, height * .5f), Offset(width * .2f, height * .5f)) }
-        output.performTouchInput { swipe(Offset(width * .5f, height * .4f), Offset(width * .5f, height * .4f + 8f)) }
-        rule.runOnIdle { assertEquals(0, sent.count { it.kind == "scroll" }) }
-        output.performTouchInput { swipe(Offset(width * .5f, height * .3f), Offset(width * .5f, height * .7f)) }
-        rule.runOnIdle { assertEquals("up", sent.last { it.kind == "scroll" }.payload().string("direction")) }
+        output.performTouchInput { swipeDown() }
         output.performTouchInput { swipeUp() }
-        rule.runOnIdle { assertEquals(1, sent.count { it.kind == "scroll" }) }
-        complete()
-        output.performTouchInput { swipe(Offset(width * .5f, height * .7f), Offset(width * .5f, height * .3f)) }
-        rule.runOnIdle {
-            assertEquals(2, sent.count { it.kind == "scroll" })
-            assertEquals("down", sent.last { it.kind == "scroll" }.payload().string("direction"))
-        }
-        complete()
+        rule.runOnIdle { assertEquals(0, sent.count { it.kind == "scroll" }) }
+        rule.onNodeWithText("Scroll up").assertIsEnabled()
+        rule.onNodeWithText("Scroll down").assertIsEnabled()
     }
 
     @Test
@@ -165,6 +211,12 @@ class RemoteScrollTest {
             assertTrue(session.liveScrollIndex > 0 || session.liveScrollOffset > 0)
         }
         screenshot("local-reading")
+        rule.onNodeWithText("Follow latest").performClick()
+        rule.onNodeWithText("Following latest").assertIsDisplayed()
+        rule.runOnIdle {
+            assertTrue(session.state.value.follow)
+            assertEquals(2, sent.count { it.kind == "scroll" })
+        }
     }
 
     @Test

@@ -8,6 +8,7 @@ protocol MirrorPaneSource {
   func textSnapshot(_ id: UUID) throws -> MirrorTextSnapshot
   func activeText(_ id: UUID) throws -> String
   var supportsViewportText: Bool { get }
+  var supportsScrollState: Bool { get }
   var supportsRemoteScroll: Bool { get }
   func scroll(_ direction: MirrorMessage.ScrollDirection, to id: UUID) throws
   var supportsBoundedHistory: Bool { get }
@@ -19,11 +20,13 @@ struct MirrorTextSnapshot {
   var columns: UInt32 = 0
   var rows: UInt32 = 0
   var truncated = false
+  var scrollBounds: MirrorScrollBounds?
 }
 
 extension MirrorPaneSource {
   func textSnapshot(_ id: UUID) throws -> MirrorTextSnapshot { .init(text: try activeText(id)) }
   var supportsViewportText: Bool { false }
+  var supportsScrollState: Bool { false }
   var supportsRemoteScroll: Bool { false }
   func scroll(_ direction: MirrorMessage.ScrollDirection, to id: UUID) throws {
     throw MirrorProtocolError.invalidMessage

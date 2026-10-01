@@ -2,8 +2,6 @@ package com.awhisper.prowlmirror
 
 import android.view.KeyEvent as AndroidKeyEvent
 import androidx.compose.foundation.*
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.*
@@ -20,10 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.pointer.PointerEventPass
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.*
 import androidx.compose.ui.text.font.FontFamily
@@ -385,46 +380,6 @@ private fun Reading(session: Session, state: SessionState) {
                 if (state.showsHistory) session.historyScrollIndex else session.liveScrollIndex,
                 if (state.showsHistory) session.historyScrollOffset else session.liveScrollOffset,
             )
-        val canScrollRemote by rememberUpdatedState(state.canScrollRemote)
-        val threshold = with(LocalDensity.current) { 56.dp.toPx() }
-        val remoteGesture =
-            if (!state.showsHistory && "remote-scroll" in state.capabilities)
-                Modifier.pointerInput(session.id, threshold) {
-                    awaitEachGesture {
-                        val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
-                        val enabled = canScrollRemote
-                        val atTop = !scroll.canScrollBackward
-                        val atBottom = !scroll.canScrollForward
-                        var position = down.position
-                        var multiplePointers = false
-                        var dragging = false
-                        var longPressed = false
-                        do {
-                            val event = awaitPointerEvent(PointerEventPass.Initial)
-                            if (event.changes.count { it.pressed } > 1) multiplePointers = true
-                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                            position = change.position
-                            if (!dragging) {
-                                // A hold before moving belongs to native text selection.
-                                if (change.uptimeMillis - down.uptimeMillis >= viewConfiguration.longPressTimeoutMillis)
-                                    longPressed = true
-                                if ((position - down.position).getDistance() > viewConfiguration.touchSlop)
-                                    dragging = true
-                            }
-                        } while (change.pressed)
-                        // Observe without consuming: local text scrolling and selection stay native.
-                        if (enabled && canScrollRemote && !multiplePointers && !longPressed) {
-                            remoteScrollDirection(
-                                position.x - down.position.x,
-                                position.y - down.position.y,
-                                atTop,
-                                atBottom,
-                                threshold,
-                            )?.let(session::scrollRemote)
-                        }
-                    }
-                }
-            else Modifier
         LaunchedEffect(scroll) {
             scroll.interactionSource.interactions.collect {
                 if (it is DragInteraction.Start && !state.showsHistory) session.setFollow(false)
@@ -476,11 +431,11 @@ private fun Reading(session: Session, state: SessionState) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     TextButton(
                         onClick = { session.scrollRemote(ScrollDirection.UP) },
-                        enabled = state.canScrollRemote,
+                        enabled = state.canScrollRemote(ScrollDirection.UP),
                     ) { Text("Scroll up") }
                     TextButton(
                         onClick = { session.scrollRemote(ScrollDirection.DOWN) },
-                        enabled = state.canScrollRemote,
+                        enabled = state.canScrollRemote(ScrollDirection.DOWN),
                     ) { Text("Scroll down") }
                     if (state.scrolling != null) {
                         CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
@@ -488,7 +443,7 @@ private fun Reading(session: Session, state: SessionState) {
                     }
                 }
             LazyColumn(
-                Modifier.weight(1f).fillMaxWidth().then(remoteGesture).testTag("mirror-output"),
+                Modifier.weight(1f).fillMaxWidth().testTag("mirror-output"),
                 state = scroll,
                 contentPadding = PaddingValues(16.dp),
             ) {

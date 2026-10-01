@@ -69,22 +69,3 @@ struct MirrorScrollStateTests {
     #expect(state.error == nil)
   }
 }
-
-struct MirrorScrollGestureTests {
-  @Test func onePagePerTrackpadGestureAndNoMomentumRequests() {
-    var gesture = MirrorScrollGesture()
-    #expect(gesture.consume(delta: 10, precise: true, phase: .began, momentum: [], timestamp: 1) == nil)
-    #expect(gesture.consume(delta: 25, precise: true, phase: .changed, momentum: [], timestamp: 2) == .upward)
-    #expect(gesture.consume(delta: 50, precise: true, phase: .changed, momentum: [], timestamp: 3) == nil)
-    #expect(gesture.consume(delta: 0, precise: true, phase: .ended, momentum: [], timestamp: 4) == nil)
-    #expect(gesture.consume(delta: 50, precise: true, phase: [], momentum: .changed, timestamp: 5) == nil)
-    #expect(gesture.consume(delta: -35, precise: true, phase: .began, momentum: [], timestamp: 6) == .downward)
-  }
-
-  @Test func discreteWheelIsRateLimitedWithoutAccumulatingDelayedPages() {
-    var gesture = MirrorScrollGesture()
-    #expect(gesture.consume(delta: 1, precise: false, phase: [], momentum: [], timestamp: 1) == .upward)
-    #expect(gesture.consume(delta: 10, precise: false, phase: [], momentum: [], timestamp: 1.1) == nil)
-    #expect(gesture.consume(delta: -1, precise: false, phase: [], momentum: [], timestamp: 1.5) == .downward)
-  }
-}

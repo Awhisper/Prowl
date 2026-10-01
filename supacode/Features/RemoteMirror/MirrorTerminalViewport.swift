@@ -7,18 +7,15 @@ struct MirrorTerminalViewport: NSViewRepresentable {
   let displaySize: CGSize
   var fitsWindow = true
   var viewportText: String?
-  var onRemoteScroll: ((MirrorMessage.ScrollDirection) -> Void)?
 
   func makeNSView(context: Context) -> MirrorTerminalScrollView {
     let view = MirrorTerminalScrollView(surface: surface, displaySize: displaySize, fitsWindow: fitsWindow)
-    view.onRemoteScroll = onRemoteScroll
     view.updateViewportText(viewportText)
     return view
   }
 
   func updateNSView(_ view: MirrorTerminalScrollView, context: Context) {
     view.update(surface: surface, displaySize: displaySize, fitsWindow: fitsWindow)
-    view.onRemoteScroll = onRemoteScroll
     view.updateViewportText(viewportText)
   }
 }
@@ -61,8 +58,6 @@ final class MirrorTerminalScrollView: NSScrollView {
   private var fitsWindow: Bool
   private var resetOrigin = true
   private var isLayingOut = false
-  var onRemoteScroll: ((MirrorMessage.ScrollDirection) -> Void)?
-  private var scrollGesture = MirrorScrollGesture()
   var displaySize: CGSize {
     didSet { if displaySize != oldValue { needsLayout = true } }
   }
@@ -130,21 +125,6 @@ final class MirrorTerminalScrollView: NSScrollView {
     fatalError("init(coder:) is not supported")
   }
 
-  override func scrollWheel(with event: NSEvent) {
-    guard let onRemoteScroll, !event.modifierFlags.contains(.option),
-      abs(event.scrollingDeltaY) >= abs(event.scrollingDeltaX)
-    else {
-      super.scrollWheel(with: event)
-      return
-    }
-    if let direction = scrollGesture.consume(
-      delta: event.scrollingDeltaY, precise: event.hasPreciseScrollingDeltas,
-      phase: event.phase, momentum: event.momentumPhase, timestamp: event.timestamp)
-    {
-      onRemoteScroll(direction)
-    }
-  }
-
   override func layout() {
     guard !isLayingOut else { return }
     isLayingOut = true
@@ -191,36 +171,5 @@ final class MirrorTerminalScrollView: NSScrollView {
     } else {
       viewport.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
     }
-  }
-}
-
-struct MirrorScrollGesture {
-  private var accumulated: CGFloat = 0
-  private var sentForGesture = false
-  private var lastWheelTime: TimeInterval = -.infinity
-
-  mutating func consume(
-    delta: CGFloat, precise: Bool, phase: NSEvent.Phase, momentum: NSEvent.Phase, timestamp: TimeInterval
-  ) -> MirrorMessage.ScrollDirection? {
-    guard momentum.isEmpty else { return nil }
-    if phase.contains(.began) {
-      accumulated = 0
-      sentForGesture = false
-    }
-    if phase.contains(.ended) || phase.contains(.cancelled) {
-      accumulated = 0
-      sentForGesture = false
-      return nil
-    }
-    guard delta != 0, phase.isEmpty || !sentForGesture else { return nil }
-    if phase.isEmpty, timestamp - lastWheelTime < 0.3 { return nil }
-    if accumulated * delta < 0 { accumulated = 0 }
-    accumulated += delta
-    guard abs(accumulated) >= (precise ? 30 : 1) else { return nil }
-    let direction: MirrorMessage.ScrollDirection = accumulated > 0 ? .upward : .downward
-    accumulated = 0
-    sentForGesture = true
-    lastWheelTime = timestamp
-    return direction
   }
 }

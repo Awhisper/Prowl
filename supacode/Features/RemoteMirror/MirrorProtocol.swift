@@ -15,6 +15,12 @@ nonisolated struct MirrorFrame: Codable, Equatable, Sendable {
   let rows: UInt32
   let bytes: Data
   var viewportText: String?
+  var scrollBounds: MirrorScrollBounds?
+}
+
+nonisolated struct MirrorScrollBounds: Codable, Equatable, Sendable {
+  var atTop: Bool?
+  var atBottom: Bool?
 }
 
 nonisolated enum MirrorMessage: Codable, Sendable {
@@ -52,7 +58,7 @@ nonisolated enum MirrorMessage: Codable, Sendable {
   enum Kind: String, Codable {
     case challenge, authenticate, pair, paired, authenticated, list, panes, subscribe, subscribed,
       frame, textFrame, viewport, acknowledge, input, history, historyPage, failure, ping, pong, ended,
-      refresh, scroll, scrollResult, command, commandResult, commandReceipt
+      refresh, scroll, scrollResult, scrollState, command, commandResult, commandReceipt
   }
   case list
   case panes(PanesPayload)
@@ -67,6 +73,7 @@ nonisolated enum MirrorMessage: Codable, Sendable {
     var representation: Representation
     var intent: Intent
     var includeViewportText: Bool?
+    var includeScrollState: Bool?
   }
   case subscribed(SubscribedPayload)
   struct SubscribedPayload: Codable, Sendable {
@@ -88,6 +95,7 @@ nonisolated enum MirrorMessage: Codable, Sendable {
     var sequence: UInt64
     var text: String
     var subscriptionID: UUID
+    var scrollBounds: MirrorScrollBounds?
   }
   case viewport(ViewportPayload)
   struct ViewportPayload: Codable, Sendable {
@@ -114,6 +122,13 @@ nonisolated enum MirrorMessage: Codable, Sendable {
   case scrollResult(ScrollResultPayload)
   struct ScrollResultPayload: Codable, Sendable {
     var requestID: UUID
+    var sequence: UInt64
+    var subscriptionID: UUID
+  }
+  case scrollState(ScrollStatePayload)
+  struct ScrollStatePayload: Codable, Sendable {
+    var atTop: Bool?
+    var atBottom: Bool?
     var sequence: UInt64
     var subscriptionID: UUID
   }
@@ -181,6 +196,7 @@ nonisolated enum MirrorMessage: Codable, Sendable {
     case .input: .input
     case .scroll: .scroll
     case .scrollResult: .scrollResult
+    case .scrollState: .scrollState
     case .history: .history
     case .historyPage: .historyPage
     case .failure: .failure
@@ -241,6 +257,7 @@ nonisolated enum MirrorMessage: Codable, Sendable {
     case .input(let payload): payload.subscriptionID
     case .scroll(let payload): payload.subscriptionID
     case .scrollResult(let payload): payload.subscriptionID
+    case .scrollState(let payload): payload.subscriptionID
     case .history(let payload): payload.subscriptionID
     case .historyPage(let payload): payload.subscriptionID
     case .failure(let payload): payload.subscriptionID
@@ -263,6 +280,7 @@ nonisolated enum MirrorMessage: Codable, Sendable {
     case .viewport(let payload): payload.sequence
     case .acknowledge(let payload): payload.sequence
     case .scrollResult(let payload): payload.sequence
+    case .scrollState(let payload): payload.sequence
     default: nil
     }
   }
@@ -281,6 +299,18 @@ nonisolated enum MirrorMessage: Codable, Sendable {
   var includeViewportText: Bool? {
     switch self {
     case .subscribe(let payload): payload.includeViewportText
+    default: nil
+    }
+  }
+  var includeScrollState: Bool? {
+    switch self {
+    case .subscribe(let payload): payload.includeScrollState
+    default: nil
+    }
+  }
+  var scrollBounds: MirrorScrollBounds? {
+    switch self {
+    case .scrollState(let payload): .init(atTop: payload.atTop, atBottom: payload.atBottom)
     default: nil
     }
   }
@@ -499,10 +529,12 @@ nonisolated struct MirrorTextFrameGate {
   var outstanding: UInt64? { gate.outstanding }
 
   mutating func offer(
-    _ text: String, columns: UInt32 = 0, rows: UInt32 = 0, truncated: Bool = false
+    _ text: String, columns: UInt32 = 0, rows: UInt32 = 0, truncated: Bool = false,
+    scrollBounds: MirrorScrollBounds? = nil
   ) -> UInt64? {
     gate.offer(
-      MirrorFrame(columns: columns, rows: rows, bytes: Data([truncated ? 1 : 0]) + Data(text.utf8)))
+      MirrorFrame(
+        columns: columns, rows: rows, bytes: Data([truncated ? 1 : 0]) + Data(text.utf8), scrollBounds: scrollBounds))
   }
 
   mutating func acknowledge(_ sequence: UInt64) throws {

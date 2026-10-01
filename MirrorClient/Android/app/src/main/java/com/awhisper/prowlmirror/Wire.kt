@@ -30,6 +30,9 @@ fun JsonObject.flag(key: String): Boolean =
     get(key)?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isBoolean }?.asBoolean
         ?: throw IOException("Missing or invalid $key")
 
+fun JsonObject.optionalFlag(key: String): Boolean? =
+    if (!has(key) || get(key).isJsonNull) null else flag(key)
+
 fun JsonObject.optionalString(key: String): String? =
     if (!has(key) || get(key).isJsonNull) null else string(key)
 
@@ -103,6 +106,7 @@ object Wire {
             "refresh",
             "scroll",
             "scrollResult",
+            "scrollState",
             "history",
             "historyPage",
             "command",

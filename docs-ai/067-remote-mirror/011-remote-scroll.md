@@ -32,11 +32,10 @@ direct, bounded up/down interaction with the live Host terminal on all clients.
 - A `scrollResult` identifies a fresh frame sequence after scrolling; this confirms
   terminal input and capture, not application-level page position or completion.
 - Clients allow one scroll at a time and provide loading, bounded timeout,
-  cancellation on disconnect/takeover, and up/down buttons as gesture fallback.
+  cancellation on disconnect/takeover, and explicit up/down buttons.
   No automatic retry of input after uncertain delivery.
-- Mac wheel gestures scroll the remote terminal. Mobile text first scrolls its
-  local readable content; an outward drag at a reading boundary requests a remote
-  step. Directions follow ordinary scroll semantics; History is unaffected.
+- Superseded interaction: remote scrolling now uses explicit top-row buttons only.
+  Wheel and touch gestures remain local; see [012](012-scroll-controls-and-report-feedback.md).
 - Local Host and remote client share the live viewport. Page distance depends on
   application handling and configured wheel multiplier. This is not an independent archive.
 

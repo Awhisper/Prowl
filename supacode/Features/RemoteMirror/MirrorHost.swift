@@ -153,6 +153,7 @@ final class MirrorHost {
     let id = UUID()
     var representation: MirrorMessage.Representation = .terminal
     var includeViewportText = false
+    var includeScrollState = false
     var unstableCaptures = 0
     var gate = MirrorFrameGate()
     var textGate = MirrorTextFrameGate()
@@ -508,7 +509,8 @@ final class MirrorHost {
                   ? ["launch-profile", "launch-shell", "agents-dispatch", "agent-input"] : [])
                 + (source.supportsBoundedHistory ? ["history"] : [])
                 + (source.supportsRemoteScroll ? ["remote-scroll"] : [])
-                + (source.supportsViewportText ? ["viewport-text-v1"] : []), hostRunID: hostRunID)))
+                + (source.supportsViewportText ? ["viewport-text-v1"] : [])
+                + (source.supportsScrollState ? ["scroll-state-v1"] : []), hostRunID: hostRunID)))
       case .command:
         try handleCommand(message, peer: peer)
       case .commandReceipt:
@@ -700,7 +702,8 @@ final class MirrorHost {
     var next = Subscription(
       paneID: paneID, representation: representation,
       includeViewportText: representation == .terminal && message.includeViewportText == true
-        && source.supportsViewportText)
+        && source.supportsViewportText,
+      includeScrollState: message.includeScrollState == true && source.supportsScrollState)
     // Prepare and encode before revoking the old lease. Capture failure leaves it intact.
     let first = try capture(&next)
     if let first { _ = try MirrorWire.encode(first) }
@@ -747,18 +750,20 @@ final class MirrorHost {
       guard subscription.textGate.outstanding == nil else { return nil }
       let captured = try source.textSnapshot(subscription.paneID)
       let text = captured.text
+      let bounds = subscription.includeScrollState ? captured.scrollBounds : nil
       guard
         let sequence = subscription.textGate.offer(
-          text, columns: captured.columns, rows: captured.rows, truncated: captured.truncated)
+          text, columns: captured.columns, rows: captured.rows, truncated: captured.truncated, scrollBounds: bounds)
       else { return nil }
       return .textFrame(
         .init(
           columns: captured.columns, rows: captured.rows, truncated: captured.truncated,
-          sequence: sequence, text: text, subscriptionID: subscription.id))
+          sequence: sequence, text: text, subscriptionID: subscription.id, scrollBounds: bounds))
     }
     guard subscription.gate.outstanding == nil else { return nil }
     var frame = try source.snapshot(subscription.paneID)
     if !subscription.includeViewportText { frame.viewportText = nil }
+    if !subscription.includeScrollState { frame.scrollBounds = nil }
     guard let sequence = subscription.gate.offer(frame) else { return nil }
     return .frame(.init(frame: frame, sequence: sequence, subscriptionID: subscription.id))
   }
@@ -767,6 +772,18 @@ final class MirrorHost {
     if subscription.includeViewportText, case .frame(let payload) = message {
       peer.send(
         .viewport(.init(text: payload.frame.viewportText, sequence: payload.sequence, subscriptionID: subscription.id)))
+    }
+    if subscription.includeScrollState, let sequence = message.sequence {
+      let bounds: MirrorScrollBounds?
+      switch message {
+      case .frame(let payload): bounds = payload.frame.scrollBounds
+      case .textFrame(let payload): bounds = payload.scrollBounds
+      default: bounds = nil
+      }
+      peer.send(
+        .scrollState(
+          .init(
+            atTop: bounds?.atTop, atBottom: bounds?.atBottom, sequence: sequence, subscriptionID: subscription.id)))
     }
     peer.send(message)
   }

@@ -3,6 +3,68 @@ import XCTest
 
 final class ProwlMirror_iOSUITests: XCTestCase {
   @MainActor
+  func testHostBoundariesDisableOnlyTheReachedDirection() {
+    let app = XCUIApplication()
+    app.launchArguments = ["--mirror-ui-fixture", "--mirror-ui-scroll-fixture", "--mirror-ui-scroll-boundary-fixture"]
+    XCUIDevice.shared.orientation = .portrait
+    app.launch()
+    let scrollUp = app.buttons["mirror-scroll-up"]
+    let scrollDown = app.buttons["mirror-scroll-down"]
+    XCTAssertTrue(scrollUp.waitForExistence(timeout: 10))
+    func page(_ number: Int) -> XCUIElement {
+      app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Remote page \(number)\n")).firstMatch
+    }
+    XCTAssertTrue(scrollUp.isEnabled)
+    XCTAssertFalse(scrollDown.isEnabled)
+    XCTAssertLessThan(scrollUp.frame.maxY, page(0).frame.minY)
+    scrollUp.tap()
+    XCTAssertTrue(page(-1).waitForExistence(timeout: 5))
+    XCTAssertTrue(scrollUp.isEnabled && scrollDown.isEnabled)
+    scrollUp.tap()
+    XCTAssertTrue(page(-2).waitForExistence(timeout: 5))
+    XCTAssertFalse(scrollUp.isEnabled)
+    XCTAssertTrue(scrollDown.isEnabled)
+    let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+    attachment.name = "Top controls at Host scroll boundary"
+    attachment.lifetime = .keepAlways
+    add(attachment)
+    scrollDown.tap()
+    XCTAssertTrue(page(-1).waitForExistence(timeout: 5))
+    XCTAssertTrue(scrollUp.isEnabled && scrollDown.isEnabled)
+    scrollDown.tap()
+    XCTAssertTrue(page(0).waitForExistence(timeout: 5))
+    XCTAssertTrue(scrollUp.isEnabled)
+    XCTAssertFalse(scrollDown.isEnabled)
+    app.buttons["History"].tap()
+    XCTAssertTrue(app.buttons["Load Earlier 200 Lines"].waitForExistence(timeout: 5))
+    XCTAssertFalse(scrollUp.exists)
+    app.buttons["Live Output"].tap()
+    XCTAssertTrue(scrollUp.waitForExistence(timeout: 5))
+    XCTAssertTrue(scrollUp.isEnabled)
+    XCTAssertFalse(scrollDown.isEnabled)
+  }
+
+  @MainActor
+  func testOldHostKeepsScrollButtonsDisabledAndLocalReaderAvailable() {
+    let app = XCUIApplication()
+    app.launchArguments = ["--mirror-ui-fixture", "--mirror-ui-scroll-fixture", "--mirror-ui-no-scroll-fixture"]
+    XCUIDevice.shared.orientation = .portrait
+    app.launch()
+    let scrollUp = app.buttons["mirror-scroll-up"]
+    let scrollDown = app.buttons["mirror-scroll-down"]
+    XCTAssertTrue(scrollUp.waitForExistence(timeout: 10))
+    XCTAssertFalse(scrollUp.isEnabled)
+    XCTAssertFalse(scrollDown.isEnabled)
+    let text = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Remote page 0\n")).firstMatch
+    XCTAssertTrue(text.exists)
+    XCTAssertLessThan(scrollUp.frame.maxY, text.frame.minY)
+    app.scrollViews["mirror-live-scroll"].swipeDown()
+    app.scrollViews["mirror-live-scroll"].swipeUp()
+    XCTAssertTrue(text.exists)
+    XCTAssertTrue(app.buttons["Latest"].isEnabled)
+  }
+
+  @MainActor
   func testSelectingTextDoesNotScrollTheHost() {
     let app = XCUIApplication()
     app.launchArguments = ["--mirror-ui-fixture", "--mirror-ui-scroll-fixture"]
@@ -92,7 +154,7 @@ final class ProwlMirror_iOSUITests: XCTestCase {
   }
 
   @MainActor
-  func testRemoteScrollButtonsAndEdgeGesturesLeaveHistoryUnchanged() {
+  func testRemoteScrollButtonsLeaveLocalGesturesAndHistoryUnchanged() {
     let app = XCUIApplication()
     app.launchArguments = ["--mirror-ui-fixture", "--mirror-ui-scroll-fixture"]
     XCUIDevice.shared.orientation = .portrait
@@ -108,11 +170,12 @@ final class ProwlMirror_iOSUITests: XCTestCase {
     XCTAssertTrue(page(-1).waitForExistence(timeout: 5))
     down.tap()
     XCTAssertTrue(page(0).waitForExistence(timeout: 5))
+    XCTAssertLessThan(scrollUp.frame.maxY, page(0).frame.minY)
     let reading = app.scrollViews["mirror-live-scroll"]
     reading.swipeDown()
-    XCTAssertTrue(page(-1).waitForExistence(timeout: 5))
+    XCTAssertTrue(page(0).exists)
     reading.swipeUp()
-    XCTAssertTrue(page(0).waitForExistence(timeout: 5))
+    XCTAssertTrue(page(0).exists)
     let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
     attachment.name = "Remote scroll controls"
     attachment.lifetime = .keepAlways
