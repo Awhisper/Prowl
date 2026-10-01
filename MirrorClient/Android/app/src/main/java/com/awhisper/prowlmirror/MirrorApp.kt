@@ -288,6 +288,7 @@ private fun HostDialog(
                 Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
+                PairingScanButton(connect = connect, failed = { error = it })
                 saved.takeLast(5).reversed().forEach { host ->
                     TextButton(
                         onClick = {

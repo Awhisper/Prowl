@@ -196,3 +196,16 @@ Native clients live in [MirrorClient/iOS](../MirrorClient/iOS/) (iPhone and iPad
 and [MirrorClient/Android](../MirrorClient/Android/) (phones and tablets). Each
 project retains its own build and test entry points; neither is built by the Mac
 App target or release pipeline. See [client setup](../MirrorClient/README.md).
+
+### Scan to pair a phone
+
+Open **Add a Device** on Host, then **Scan QR Code** in the mobile app's Host
+connection form. The QR includes the numeric IP address, port and current pairing
+code. Scanning starts the normal authenticated pairing flow and then offers the
+Host panes. Choose the Wi-Fi or VPN address reachable from your phone in **QR
+address** when Host has multiple interfaces. Both devices still need network access
+to that address; scanning does not create a tunnel.
+
+The QR expires with the existing 60-second, single-use code. Refresh Code on Host
+and scan again if it expires. Camera permission is requested only when scanning;
+manual entry remains available if permission is denied or scanning is unsupported.

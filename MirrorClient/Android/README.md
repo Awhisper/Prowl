@@ -73,3 +73,7 @@ Source attribution and upstream terms: [ThirdPartyNotices](ThirdPartyNotices/REA
 Ordinary Send requires Host capability `agent-input`. It does not add a completion
 prompt or create a pending dispatch; prior automation receipts remain unchanged.
 Delivery confirmation and reconnect receipt lookup remain separate from task success.
+
+Use **Scan QR Code** in the Host connection form to scan **Add a Device** on Host.
+Scanning connects with the encoded address, port and short-lived code. Camera
+permission is optional; manual entry remains available. Refresh expired codes on Host.

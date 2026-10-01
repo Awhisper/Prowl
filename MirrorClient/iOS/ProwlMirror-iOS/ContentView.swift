@@ -156,6 +156,7 @@ private struct AddConnectionView: View {
   @State private var error: String?
   @State private var session: MirrorSession?
   @State private var added = false
+  @State private var showsScanner = false
 
   var body: some View {
     NavigationStack {
@@ -199,6 +200,13 @@ private struct AddConnectionView: View {
           }
         } else {
           Section("Host connection") {
+            Button {
+              showsScanner = true
+            } label: {
+              Label("Scan QR Code", systemImage: "qrcode.viewfinder")
+            }
+            .disabled(session?.status == .connecting)
+            .accessibilityIdentifier("scan-pairing-qr")
             TextField("Host IP", text: $address)
               .textInputAutocapitalization(.never).autocorrectionDisabled()
               .accessibilityIdentifier("host-address")
@@ -231,6 +239,18 @@ private struct AddConnectionView: View {
             port = String(saved.port)
             key = saved.pairingKey
           }
+        } catch { self.error = error.localizedDescription }
+      }
+    }
+    .sheet(isPresented: $showsScanner) {
+      MirrorPairingScanner { text in
+        showsScanner = false
+        do {
+          let payload = try MirrorPairingPayload.parse(text)
+          address = payload.address
+          port = String(payload.port)
+          key = payload.code
+          connect()
         } catch { self.error = error.localizedDescription }
       }
     }

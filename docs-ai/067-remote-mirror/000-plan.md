@@ -69,3 +69,4 @@ capability needed here. Browser clients are outside this implementation.
 - Updated 2026-09-17: Planned Mac-side Shell and Agent Profile creation and connection-picker improvements — see [008-client-pane-launch.md](008-client-pane-launch.md).
 
 - Updated 2026-10-01: Separate mobile interactive input from task receipts — see [009](009-interactive-input.md).
+- Updated 2026-10-01: QR enrollment for mobile clients — see [010-qr-pairing.md](010-qr-pairing.md).

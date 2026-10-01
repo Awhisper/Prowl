@@ -385,6 +385,7 @@ private struct MirrorSettingsView: View {
 private struct MirrorPairingView: View {
   @Bindable var host: MirrorHost
   let dismiss: () -> Void
+  @State private var qrAddress = ""
   @State private var hasRequestedCode = false
   @State private var copied = false
   @State private var copyError: String?
@@ -413,13 +414,14 @@ private struct MirrorPairingView: View {
         Text(
           """
           On the other device, open Remote Mirror → Client → Connect to a New Host. \
-          Enter one of these addresses with the port, then the code below.
+          Scan the QR code in the mobile app, or enter an address, port and code below.
           """
         )
         .foregroundStyle(.secondary)
         .fixedSize(horizontal: false, vertical: true)
         addresses
         code
+        pairingQR
       }
       if let error = copyError ?? host.error {
         Text(error).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
@@ -469,6 +471,29 @@ private struct MirrorPairingView: View {
       dismissTask?.cancel()
       host.cancelPairing()
     }
+  }
+
+  private var pairingQR: some View {
+    let choices = reachable.filter { !$0.isLoopback && $0.address != "::1" }
+    let selected =
+      choices.first(where: { $0.address == qrAddress })?.address ?? choices.first?.address
+    return VStack(spacing: 8) {
+      if let expires = host.pairingExpiresAt, let selected {
+        if choices.count > 1 {
+          Picker("QR address", selection: Binding(get: { selected }, set: { qrAddress = $0 })) {
+            ForEach(choices) { item in
+              Text("\(item.label): \(item.address)").tag(item.address)
+            }
+          }
+          .help("Choose an address reachable from your phone over Wi-Fi or VPN")
+        }
+        MirrorPairingQRCode(
+          address: selected, port: host.port, code: host.pairingKey, expires: expires)
+        Text("In Prowl Mirror on your phone, tap Scan QR Code.")
+          .font(.caption).foregroundStyle(.secondary)
+      }
+    }
+    .frame(maxWidth: .infinity)
   }
 
   private var addresses: some View {
