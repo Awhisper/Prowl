@@ -41,23 +41,25 @@ class SessionTest {
         val peer
             get() = peers.last()
 
-        fun ready(interactive: Boolean = true) {
+        fun ready(interactive: Boolean = true, remoteScroll: Boolean = false) {
             peer.ready(host)
             peer.receive(
                 control(
                     "panes",
                     obj(
                         "panes" to listOf(pane),
-                        "capabilities" to (listOf("text-v1", "launch-profile", "history", "refresh") + if (interactive) listOf("agent-input") else emptyList()),
+                        "capabilities" to (listOf("text-v1", "launch-profile", "history", "refresh") +
+                            (if (interactive) listOf("agent-input") else emptyList()) +
+                            (if (remoteScroll) listOf("remote-scroll") else emptyList())),
                         "hostRunID" to run,
                     ),
                 )
             )
         }
 
-        fun live() {
+        fun live(remoteScroll: Boolean = false) {
             session.connect()
-            ready()
+            ready(remoteScroll = remoteScroll)
             session.choose(pane)
             subscribed()
         }
@@ -99,6 +101,160 @@ class SessionTest {
                 ),
             )
         }
+    }
+
+    @Test
+    fun remoteScrollRequiresCapabilityAndLiveView() = runTest {
+        val f = Fixture(backgroundScope)
+        f.live()
+        f.session.scrollRemote(ScrollDirection.UP)
+        assertFalse(f.session.state.value.canScrollRemote)
+        assertFalse(f.peer.sent.any { it.kind == "scroll" })
+        f.ready(remoteScroll = true)
+        assertTrue(f.session.state.value.canScrollRemote)
+        f.session.loadHistory()
+        f.session.scrollRemote(ScrollDirection.DOWN)
+        assertFalse(f.peer.sent.any { it.kind == "scroll" })
+        f.session.close()
+    }
+
+    @Test
+    fun remoteScrollIsSingleFlightAndCompletesOnlyAfterItsFrame() = runTest {
+        val f = Fixture(backgroundScope)
+        f.live(remoteScroll = true)
+        f.peer.receive(Packet.Text(f.lease, 1, 80, 24, false, "screen"))
+        f.session.scrollRemote(ScrollDirection.UP)
+        val request = f.peer.sent.last().payload()
+        assertEquals("up", request.string("direction"))
+        assertEquals(f.lease, request.string("subscriptionID"))
+        assertEquals(ScrollDirection.UP, f.session.state.value.scrolling)
+        assertFalse(f.session.state.value.follow)
+        f.session.scrollRemote(ScrollDirection.DOWN)
+        assertEquals(1, f.peer.sent.count { it.kind == "scroll" })
+        // Even at a boundary, Host returns a fresh sequence for the unchanged screen.
+        f.peer.receive(Packet.Text(f.lease, 2, 80, 24, false, "screen"))
+        assertEquals(ScrollDirection.UP, f.session.state.value.scrolling)
+        f.peer.receive(control("scrollResult", obj(
+            "requestID" to request.string("requestID"),
+            "subscriptionID" to f.lease,
+            "sequence" to 2,
+        )))
+        assertNull(f.session.state.value.scrolling)
+        assertEquals(ScrollDirection.UP, f.session.state.value.scrollCompletion?.direction)
+        assertFalse(f.session.state.value.follow)
+        assertEquals(Status.live, f.session.state.value.status)
+        advanceTimeBy(6_000)
+        assertNull(f.session.state.value.error)
+        f.session.close()
+    }
+
+    @Test
+    fun remoteScrollRejectsMissingStaleOrInvalidFrameSequence() = runTest {
+        for (sequence in listOf(0L, 1L, 3L, -1L)) {
+            val f = Fixture(backgroundScope)
+            f.live(remoteScroll = true)
+            f.peer.receive(Packet.Text(f.lease, 1, 80, 24, false, "before"))
+            f.session.scrollRemote(ScrollDirection.DOWN)
+            val requestID = f.peer.sent.last().payload().string("requestID")
+            f.peer.receive(Packet.Text(f.lease, 2, 80, 24, false, "after"))
+            f.peer.receive(control("scrollResult", obj(
+                "requestID" to requestID,
+                "subscriptionID" to f.lease,
+                "sequence" to sequence,
+            )))
+            assertEquals(Status.disconnected, f.session.state.value.status)
+            assertNull(f.session.state.value.scrolling)
+            f.session.close()
+        }
+    }
+
+    @Test
+    fun remoteScrollTimeoutDoesNotReplayAndLateMessagesCannotFinishNextRequest() = runTest {
+        val f = Fixture(backgroundScope)
+        f.live(remoteScroll = true)
+        f.session.scrollRemote(ScrollDirection.UP)
+        val oldID = f.peer.sent.last().payload().string("requestID")
+        runCurrent()
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertNull(f.session.state.value.scrolling)
+        assertEquals(Status.live, f.session.state.value.status)
+        assertTrue(f.session.state.value.error!!.contains("timed out"))
+        assertEquals(1, f.peer.sent.count { it.kind == "scroll" })
+        f.session.scrollRemote(ScrollDirection.DOWN)
+        val newID = f.peer.sent.last().payload().string("requestID")
+        f.peer.receive(control("scrollResult", obj(
+            "requestID" to oldID, "subscriptionID" to f.lease, "sequence" to 1,
+        )))
+        f.peer.receive(control("scrollResult", obj(
+            "requestID" to newID, "subscriptionID" to uuid(), "sequence" to 1,
+        )))
+        f.peer.receive(control("failure", obj(
+            "requestID" to oldID, "subscriptionID" to f.lease,
+            "error" to "SCROLL_UNAVAILABLE: old request",
+        )))
+        assertEquals(ScrollDirection.DOWN, f.session.state.value.scrolling)
+        f.peer.receive(Packet.Text(f.lease, 1, 80, 24, false, "next"))
+        f.peer.receive(control("scrollResult", obj(
+            "requestID" to newID, "subscriptionID" to f.lease, "sequence" to 1,
+        )))
+        assertEquals(ScrollDirection.DOWN, f.session.state.value.scrollCompletion?.direction)
+        f.session.close()
+    }
+
+    @Test
+    fun remoteScrollFailuresKeepConnectionAndHistoryAvailable() = runTest {
+        val f = Fixture(backgroundScope)
+        f.live(remoteScroll = true)
+        for (reason in listOf("SCROLL_UNAVAILABLE", "SCROLL_BUSY")) {
+            f.session.scrollRemote(ScrollDirection.UP)
+            val requestID = f.peer.sent.last().payload().string("requestID")
+            f.peer.receive(control("failure", obj(
+                "requestID" to requestID, "subscriptionID" to f.lease,
+                "error" to "$reason: retry later",
+            )))
+            assertNull(f.session.state.value.scrolling)
+            assertEquals(Status.live, f.session.state.value.status)
+            assertFalse(f.peer.stopped)
+        }
+        f.session.loadHistory()
+        assertTrue(f.session.state.value.loadingHistory)
+        assertEquals("history", f.peer.sent.last().kind)
+        f.session.close()
+    }
+
+    @Test
+    fun remoteScrollIsClearedOnDisconnectWithoutAutomaticReplay() = runTest {
+        val f = Fixture(backgroundScope)
+        f.live(remoteScroll = true)
+        f.session.scrollRemote(ScrollDirection.UP)
+        f.peer.closed("Network lost")
+        assertNull(f.session.state.value.scrolling)
+        f.session.retry()
+        f.ready(remoteScroll = true)
+        f.subscribed()
+        assertFalse(f.peer.sent.any { it.kind == "scroll" })
+        advanceTimeBy(6_000)
+        assertNull(f.session.state.value.error)
+        assertEquals(Status.live, f.session.state.value.status)
+        f.session.close()
+    }
+
+    @Test
+    fun enteringHistoryClearsScrollAndIgnoresItsLateResult() = runTest {
+        val f = Fixture(backgroundScope)
+        f.live(remoteScroll = true)
+        f.session.scrollRemote(ScrollDirection.UP)
+        val requestID = f.peer.sent.last().payload().string("requestID")
+        f.session.loadHistory()
+        assertNull(f.session.state.value.scrolling)
+        f.peer.receive(control("scrollResult", obj(
+            "requestID" to requestID, "subscriptionID" to f.lease, "sequence" to 1,
+        )))
+        assertTrue(f.session.state.value.showsHistory)
+        assertNull(f.session.state.value.scrollCompletion)
+        assertEquals(Status.live, f.session.state.value.status)
+        f.session.close()
     }
 
     @Test

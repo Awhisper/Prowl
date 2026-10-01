@@ -152,9 +152,21 @@ final class MirrorHost {
     let paneID: UUID
     let id = UUID()
     var representation: MirrorMessage.Representation = .terminal
+    var includeViewportText = false
+    var unstableCaptures = 0
     var gate = MirrorFrameGate()
     var textGate = MirrorTextFrameGate()
     var history: MirrorHistory?
+    var scroll: ScrollRequest?
+  }
+
+  private struct ScrollRequest {
+    let payload: MirrorMessage.ScrollPayload
+    var isReady = false
+    var sequence: UInt64?
+    var failure: String?
+
+    var isPending: Bool { sequence == nil && failure == nil }
   }
 
   init(
@@ -494,7 +506,9 @@ final class MirrorHost {
               capabilities: ["vt-v1", "text-v1", "takeover", "refresh"]
                 + (commandService != nil
                   ? ["launch-profile", "launch-shell", "agents-dispatch", "agent-input"] : [])
-                + (source.supportsBoundedHistory ? ["history"] : []), hostRunID: hostRunID)))
+                + (source.supportsBoundedHistory ? ["history"] : [])
+                + (source.supportsRemoteScroll ? ["remote-scroll"] : [])
+                + (source.supportsViewportText ? ["viewport-text-v1"] : []), hostRunID: hostRunID)))
       case .command:
         try handleCommand(message, peer: peer)
       case .commandReceipt:
@@ -516,11 +530,78 @@ final class MirrorHost {
           !bytes.isEmpty, bytes.count <= MirrorWire.maximumInput
         else { throw MirrorProtocolError.invalidMessage }
         try source.write(bytes, to: subscription.paneID)
+      case .scroll:
+        try scroll(message, peer: peer)
       case .history:
         try sendHistory(message, to: peer)
       default: throw MirrorProtocolError.invalidMessage
       }
     } catch { peer.close(error.localizedDescription) }
+  }
+
+  private func scroll(_ message: MirrorMessage, peer: MirrorConnection) throws {
+    guard var subscription = subscription(for: message, peer: peer), case .scroll(let request) = message else {
+      throw MirrorProtocolError.invalidMessage
+    }
+    if let previous = subscription.scroll, previous.payload.requestID == request.requestID {
+      guard previous.payload.direction == request.direction else { throw MirrorProtocolError.invalidMessage }
+      if let sequence = previous.sequence {
+        peer.send(
+          .scrollResult(.init(requestID: request.requestID, sequence: sequence, subscriptionID: subscription.id)))
+      } else if let failure = previous.failure {
+        peer.send(.failure(.init(error: failure, subscriptionID: subscription.id, requestID: request.requestID)))
+      }
+      return
+    }
+    guard subscription.scroll?.isPending != true else {
+      peer.send(
+        .failure(
+          .init(
+            error: "SCROLL_BUSY: Wait for the current scroll to finish.", subscriptionID: subscription.id,
+            requestID: request.requestID)))
+      return
+    }
+    guard source.supportsRemoteScroll else {
+      peer.send(
+        .failure(
+          .init(
+            error: "SCROLL_UNAVAILABLE: Host cannot scroll this pane.", subscriptionID: subscription.id,
+            requestID: request.requestID)))
+      return
+    }
+    subscription.scroll = ScrollRequest(payload: request)
+    do {
+      try source.scroll(request.direction, to: subscription.paneID)
+    } catch {
+      let failure = "SCROLL_UNAVAILABLE: Host could not scroll this pane."
+      subscription.scroll?.failure = failure
+      subscriptions[peer.id] = subscription
+      peer.send(.failure(.init(error: failure, subscriptionID: subscription.id, requestID: request.requestID)))
+      return
+    }
+    subscriptions[peer.id] = subscription
+    let clock = clock
+    Task { @MainActor [weak self, weak peer] in
+      // TUI mouse input is processed asynchronously. Return a later capture, not
+      // the screen that was present synchronously when the wheel event was sent.
+      do { try await clock.sleep(for: .milliseconds(200)) } catch { return }
+      guard let self, let peer, var current = self.subscriptions[peer.id], current.id == request.subscriptionID,
+        current.scroll?.payload.requestID == request.requestID, current.scroll?.isPending == true
+      else { return }
+      current.scroll?.isReady = true
+      self.subscriptions[peer.id] = current
+      self.poll()
+      // Prefer a changed screen, but a boundary/no-op must also finish. This
+      // bounded refresh is not a receipt from the application processing input.
+      do { try await clock.sleep(for: .milliseconds(600)) } catch { return }
+      guard var latest = self.subscriptions[peer.id], latest.id == request.subscriptionID,
+        latest.scroll?.payload.requestID == request.requestID, latest.scroll?.isPending == true
+      else { return }
+      latest.gate.requestRefresh()
+      latest.textGate.requestRefresh()
+      self.subscriptions[peer.id] = latest
+      self.poll()
+    }
   }
 
   private func handleCommand(_ message: MirrorMessage, peer: MirrorConnection) throws {
@@ -617,7 +698,9 @@ final class MirrorHost {
       return
     }
     var next = Subscription(
-      paneID: paneID, representation: representation)
+      paneID: paneID, representation: representation,
+      includeViewportText: representation == .terminal && message.includeViewportText == true
+        && source.supportsViewportText)
     // Prepare and encode before revoking the old lease. Capture failure leaves it intact.
     let first = try capture(&next)
     if let first { _ = try MirrorWire.encode(first) }
@@ -628,12 +711,13 @@ final class MirrorHost {
     subscriptions[peer.id] = next
     subscriberCount = subscriptions.count
     peer.send(.subscribed(.init(paneID: paneID, subscriptionID: next.id, hostRunID: hostRunID)))
-    if let first { peer.send(first) }
+    if let first { send(first, subscription: next, to: peer) }
 
     if pollTask == nil {
+      let clock = clock
       pollTask = Task { [weak self] in
         while !Task.isCancelled {
-          do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
+          do { try await clock.sleep(for: .milliseconds(200)) } catch { return }
           self?.poll()
         }
       }
@@ -646,6 +730,19 @@ final class MirrorHost {
   }
 
   private func capture(_ subscription: inout Subscription) throws -> MirrorMessage? {
+    if let scroll = subscription.scroll, scroll.isPending, !scroll.isReady { return nil }
+    do {
+      let frame = try captureAvailable(&subscription)
+      subscription.unstableCaptures = 0
+      return frame
+    } catch MirrorPaneSourceError.captureChanged {
+      subscription.unstableCaptures += 1
+      guard subscription.unstableCaptures < 10 else { throw MirrorProtocolError.invalidMessage }
+      return nil
+    }
+  }
+
+  private func captureAvailable(_ subscription: inout Subscription) throws -> MirrorMessage? {
     if subscription.representation == .text {
       guard subscription.textGate.outstanding == nil else { return nil }
       let captured = try source.textSnapshot(subscription.paneID)
@@ -660,9 +757,18 @@ final class MirrorHost {
           sequence: sequence, text: text, subscriptionID: subscription.id))
     }
     guard subscription.gate.outstanding == nil else { return nil }
-    let frame = try source.snapshot(subscription.paneID)
+    var frame = try source.snapshot(subscription.paneID)
+    if !subscription.includeViewportText { frame.viewportText = nil }
     guard let sequence = subscription.gate.offer(frame) else { return nil }
     return .frame(.init(frame: frame, sequence: sequence, subscriptionID: subscription.id))
+  }
+
+  private func send(_ message: MirrorMessage, subscription: Subscription, to peer: MirrorConnection) {
+    if subscription.includeViewportText, case .frame(let payload) = message {
+      peer.send(
+        .viewport(.init(text: payload.frame.viewportText, sequence: payload.sequence, subscriptionID: subscription.id)))
+    }
+    peer.send(message)
   }
 
   private func sendHistory(_ message: MirrorMessage, to peer: MirrorConnection) throws {
@@ -711,8 +817,17 @@ final class MirrorHost {
       }
       do {
         if let frame = try capture(&subscription) {
+          var result: MirrorMessage?
+          if let scroll = subscription.scroll, scroll.isPending, scroll.isReady, let sequence = frame.sequence {
+            subscription.scroll?.sequence = sequence
+            result = .scrollResult(
+              .init(requestID: scroll.payload.requestID, sequence: sequence, subscriptionID: subscription.id))
+          }
           subscriptions[id] = subscription
-          peer.send(frame)
+          send(frame, subscription: subscription, to: peer)
+          if let result { peer.send(result) }
+        } else {
+          subscriptions[id] = subscription
         }
       } catch {
         peer.close("Host pane is unavailable: \(error.localizedDescription)")

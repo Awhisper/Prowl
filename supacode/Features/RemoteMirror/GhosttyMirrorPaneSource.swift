@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import GhosttyKit
 
@@ -36,10 +37,11 @@ final class GhosttyMirrorPaneSource: MirrorPaneSource {
     }.sorted { $0.title < $1.title }
   }
 
+  var supportsViewportText: Bool { true }
+
   func snapshot(_ id: UUID) throws -> MirrorFrame {
     guard let terminal = view(id)?.surface else { throw MirrorProtocolError.invalidMessage }
-    let size = ghostty_surface_size(terminal)
-    guard size.columns > 0, size.rows > 0 else { throw MirrorProtocolError.invalidMessage }
+    let geometry = try captureGeometry(terminal)
     var text = ghostty_text_s()
     guard ghostty_surface_read_snapshot(terminal, &text) else {
       throw MirrorProtocolError.invalidMessage
@@ -48,9 +50,13 @@ final class GhosttyMirrorPaneSource: MirrorPaneSource {
     guard text.text_len <= MirrorWire.maximumPayload / 2, let bytes = text.text else {
       throw MirrorProtocolError.messageTooLarge
     }
+    let viewportText =
+      geometry.active.isScrolled
+      ? try viewportText(terminal, columns: geometry.columns, rows: geometry.rows, preserveRows: true) : nil
+    guard try captureGeometry(terminal) == geometry else { throw MirrorPaneSourceError.captureChanged }
     return MirrorFrame(
-      columns: UInt32(size.columns), rows: UInt32(size.rows),
-      bytes: Data(bytes: bytes, count: Int(text.text_len)))
+      columns: geometry.columns, rows: geometry.rows,
+      bytes: Data(bytes: bytes, count: Int(text.text_len)), viewportText: viewportText)
   }
 
   func write(_ bytes: Data, to id: UUID) throws {
@@ -79,6 +85,28 @@ final class GhosttyMirrorPaneSource: MirrorPaneSource {
       .wakeAgentDetection(forSurfaceID: id)
   }
 
+  var supportsRemoteScroll: Bool { true }
+
+  func scroll(_ direction: MirrorMessage.ScrollDirection, to id: UUID) throws {
+    guard let view = view(id), let terminal = view.surface else { throw MirrorProtocolError.invalidMessage }
+    let size = ghostty_surface_size(terminal)
+    guard size.columns > 0, size.rows > 0 else { throw MirrorProtocolError.invalidMessage }
+    let localPoint = view.window.map { view.convert($0.mouseLocationOutsideOfEventStream, from: nil) }
+    let localMods = view.ghosttyMods(NSEvent.modifierFlags)
+    defer {
+      if let localPoint, view.bounds.contains(localPoint) {
+        ghostty_surface_mouse_pos(terminal, localPoint.x, view.bounds.height - localPoint.y, localMods)
+      } else {
+        ghostty_surface_mouse_pos(terminal, -1, -1, localMods)
+      }
+    }
+    // Move through the outside position so an unchanged center cannot retain
+    // local modifier keys. One notch honors Host's configured wheel multiplier.
+    ghostty_surface_mouse_pos(terminal, -1, -1, GHOSTTY_MODS_NONE)
+    ghostty_surface_mouse_pos(terminal, view.bounds.midX, view.bounds.midY, GHOSTTY_MODS_NONE)
+    ghostty_surface_mouse_scroll(terminal, 0, direction == .upward ? 1 : -1, 0)
+  }
+
   var supportsBoundedHistory: Bool { true }
 
   func boundedRetainedText(_ id: UUID) throws -> MirrorRetainedText {
@@ -87,11 +115,92 @@ final class GhosttyMirrorPaneSource: MirrorPaneSource {
 
   func textSnapshot(_ id: UUID) throws -> MirrorTextSnapshot {
     guard let terminal = view(id)?.surface else { throw MirrorProtocolError.invalidMessage }
+    let geometry = try captureGeometry(terminal)
+    let text = try viewportText(terminal, columns: geometry.columns, rows: geometry.rows, preserveRows: false)
+    guard try captureGeometry(terminal) == geometry else { throw MirrorPaneSourceError.captureChanged }
+    return .init(text: text, columns: geometry.columns, rows: geometry.rows)
+  }
+
+  private struct Probe: Equatable {
+    let pixelY: Double
+    let offset: UInt32
+    var isScrolled: Bool { pixelY < 0 || offset > 0 }
+  }
+
+  private struct CaptureGeometry: Equatable {
+    let columns: UInt32
+    let rows: UInt32
+    let active: Probe
+  }
+
+  private func captureGeometry(_ terminal: ghostty_surface_t) throws -> CaptureGeometry {
     let size = ghostty_surface_size(terminal)
-    let value = try boundedText(id, active: true, maximumBytes: MirrorWire.maximumPayload / 8)
-    return .init(
-      text: value.text, columns: UInt32(size.columns), rows: UInt32(size.rows),
-      truncated: value.truncated)
+    guard (1...1000).contains(size.columns), (1...1000).contains(size.rows) else {
+      throw MirrorProtocolError.invalidMessage
+    }
+    let active = try probe(terminal, tag: GHOSTTY_POINT_ACTIVE, coordinate: GHOSTTY_POINT_COORD_EXACT)
+    let bottom = try probe(terminal, tag: GHOSTTY_POINT_VIEWPORT, coordinate: GHOSTTY_POINT_COORD_BOTTOM_RIGHT)
+    let columns = UInt32(size.columns)
+    let rows = UInt32(size.rows)
+    // Surface dimensions can advance before the terminal IO thread applies a
+    // resize. The viewport's final cell verifies the terminal grid itself.
+    guard bottom.pixelY >= 0, bottom.offset == columns * rows - 1 else { throw MirrorPaneSourceError.captureChanged }
+    return .init(columns: columns, rows: rows, active: active)
+  }
+
+  private func probe(
+    _ terminal: ghostty_surface_t, tag: ghostty_point_tag_e, coordinate: ghostty_point_coord_e
+  ) throws -> Probe {
+    let point = ghostty_point_s(tag: tag, coord: coordinate, x: 0, y: 0)
+    var text = ghostty_text_s()
+    guard ghostty_surface_read_text(terminal, .init(top_left: point, bottom_right: point, rectangle: false), &text)
+    else {
+      throw MirrorProtocolError.invalidMessage
+    }
+    defer { ghostty_surface_free_text(terminal, &text) }
+    // Geometry remains valid for a blank cell; text length is not a mode probe.
+    guard text.tl_px_y.isFinite else { throw MirrorProtocolError.invalidMessage }
+    return .init(pixelY: text.tl_px_y, offset: text.offset_start)
+  }
+
+  private func viewportText(
+    _ terminal: ghostty_surface_t, columns: UInt32, rows: UInt32, preserveRows: Bool
+  ) throws -> String {
+    if !preserveRows {
+      return try readText(
+        terminal,
+        selection: .init(
+          top_left: .init(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_TOP_LEFT, x: 0, y: 0),
+          bottom_right: .init(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_BOTTOM_RIGHT, x: 0, y: 0),
+          rectangle: false))
+    }
+    // The existing text API unwraps soft lines. Read physical rows separately
+    // so the Mac overlay preserves the Host grid without interpreting VT text.
+    var lines: [String] = []
+    var byteCount = 0
+    for row in 0..<rows {
+      let line = try readText(
+        terminal,
+        selection: .init(
+          top_left: .init(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_EXACT, x: 0, y: row),
+          bottom_right: .init(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_EXACT, x: columns - 1, y: row),
+          rectangle: true))
+      byteCount += line.utf8.count + (row > 0 ? 1 : 0)
+      guard byteCount <= MirrorWire.maximumPayload / 8 else { throw MirrorProtocolError.messageTooLarge }
+      lines.append(line)
+    }
+    return lines.joined(separator: "\n")
+  }
+
+  private func readText(_ terminal: ghostty_surface_t, selection: ghostty_selection_s) throws -> String {
+    var result = ghostty_text_s()
+    guard ghostty_surface_read_text(terminal, selection, &result) else { throw MirrorProtocolError.invalidMessage }
+    defer { ghostty_surface_free_text(terminal, &result) }
+    guard result.text_len <= MirrorWire.maximumPayload / 8 else { throw MirrorProtocolError.messageTooLarge }
+    guard let bytes = result.text,
+      let text = String(bytes: UnsafeRawBufferPointer(start: bytes, count: Int(result.text_len)), encoding: .utf8)
+    else { throw MirrorProtocolError.invalidMessage }
+    return text
   }
 
   func activeText(_ id: UUID) throws -> String {

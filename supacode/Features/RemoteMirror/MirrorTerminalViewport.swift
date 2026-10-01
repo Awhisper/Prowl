@@ -1,17 +1,25 @@
 import AppKit
+import GhosttyKit
 import SwiftUI
 
 struct MirrorTerminalViewport: NSViewRepresentable {
   let surface: GhosttySurfaceView
   let displaySize: CGSize
   var fitsWindow = true
+  var viewportText: String?
+  var onRemoteScroll: ((MirrorMessage.ScrollDirection) -> Void)?
 
   func makeNSView(context: Context) -> MirrorTerminalScrollView {
-    MirrorTerminalScrollView(surface: surface, displaySize: displaySize, fitsWindow: fitsWindow)
+    let view = MirrorTerminalScrollView(surface: surface, displaySize: displaySize, fitsWindow: fitsWindow)
+    view.onRemoteScroll = onRemoteScroll
+    view.updateViewportText(viewportText)
+    return view
   }
 
   func updateNSView(_ view: MirrorTerminalScrollView, context: Context) {
     view.update(surface: surface, displaySize: displaySize, fitsWindow: fitsWindow)
+    view.onRemoteScroll = onRemoteScroll
+    view.updateViewportText(viewportText)
   }
 }
 
@@ -20,11 +28,41 @@ final class MirrorTerminalScrollView: NSScrollView {
     override var isFlipped: Bool { true }
   }
 
+  private final class ViewportTextView: NSTextView {
+    weak var terminal: GhosttySurfaceView?
+
+    override func scrollWheel(with event: NSEvent) {
+      enclosingScrollView?.scrollWheel(with: event)
+    }
+
+    override func keyDown(with event: NSEvent) {
+      if event.modifierFlags.contains(.command) {
+        super.keyDown(with: event)
+      } else {
+        if let terminal { window?.makeFirstResponder(terminal) }
+        terminal?.keyDown(with: event)
+      }
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+      guard window?.firstResponder === self else { return super.performKeyEquivalent(with: event) }
+      if event.modifierFlags.contains(.command), ["a", "c"].contains(event.charactersIgnoringModifiers ?? "") {
+        return super.performKeyEquivalent(with: event)
+      }
+      guard let terminal else { return super.performKeyEquivalent(with: event) }
+      window?.makeFirstResponder(terminal)
+      return terminal.performKeyEquivalent(with: event)
+    }
+  }
+
   private var surface: GhosttySurfaceView
   private let document = Document()
+  private let viewport = ViewportTextView(frame: .zero)
   private var fitsWindow: Bool
   private var resetOrigin = true
   private var isLayingOut = false
+  var onRemoteScroll: ((MirrorMessage.ScrollDirection) -> Void)?
+  private var scrollGesture = MirrorScrollGesture()
   var displaySize: CGSize {
     didSet { if displaySize != oldValue { needsLayout = true } }
   }
@@ -45,13 +83,29 @@ final class MirrorTerminalScrollView: NSScrollView {
     // The surface retains its Host grid; magnification changes only presentation.
     documentView = document
     document.addSubview(surface)
+    viewport.isEditable = false
+    viewport.isSelectable = true
+    viewport.isRichText = false
+    viewport.isHidden = true
+    viewport.drawsBackground = true
+    viewport.backgroundColor = .textBackgroundColor
+    viewport.textColor = .textColor
+    viewport.textContainerInset = .zero
+    viewport.textContainer?.lineFragmentPadding = 0
+    viewport.textContainer?.widthTracksTextView = false
+    viewport.textContainer?.containerSize = NSSize(
+      width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+    viewport.terminal = surface
+    viewport.setAccessibilityIdentifier("remote-mirror-viewport-text")
+    document.addSubview(viewport)
   }
 
   func update(surface: GhosttySurfaceView, displaySize: CGSize, fitsWindow: Bool = true) {
     if self.surface !== surface {
       self.surface.removeFromSuperview()
       self.surface = surface
-      document.addSubview(surface)
+      document.addSubview(surface, positioned: .below, relativeTo: viewport)
+      viewport.terminal = surface
       resetOrigin = true
       needsLayout = true
     }
@@ -63,8 +117,32 @@ final class MirrorTerminalScrollView: NSScrollView {
     self.displaySize = displaySize
   }
 
+  func updateViewportText(_ text: String?) {
+    let wasHidden = viewport.isHidden
+    viewport.isHidden = text == nil
+    if let text, viewport.string != text { viewport.string = text }
+    if text == nil, window?.firstResponder === viewport { window?.makeFirstResponder(surface) }
+    if wasHidden != viewport.isHidden { resetOrigin = true }
+    needsLayout = true
+  }
+
   required init?(coder: NSCoder) {
     fatalError("init(coder:) is not supported")
+  }
+
+  override func scrollWheel(with event: NSEvent) {
+    guard let onRemoteScroll, !event.modifierFlags.contains(.option),
+      abs(event.scrollingDeltaY) >= abs(event.scrollingDeltaX)
+    else {
+      super.scrollWheel(with: event)
+      return
+    }
+    if let direction = scrollGesture.consume(
+      delta: event.scrollingDeltaY, precise: event.hasPreciseScrollingDeltas,
+      phase: event.phase, momentum: event.momentumPhase, timestamp: event.timestamp)
+    {
+      onRemoteScroll(direction)
+    }
   }
 
   override func layout() {
@@ -76,6 +154,8 @@ final class MirrorTerminalScrollView: NSScrollView {
     document.setFrameSize(displaySize)
     surface.setFrameSize(displaySize)
     surface.updateSurfaceSize()
+    viewport.setFrameSize(displaySize)
+    updateViewportFont()
     let scale =
       fitsWindow
       ? min(1, contentSize.width / max(1, displaySize.width), contentSize.height / max(1, displaySize.height))
@@ -90,5 +170,57 @@ final class MirrorTerminalScrollView: NSScrollView {
       ))
     reflectScrolledClipView(contentView)
     resetOrigin = false
+  }
+
+  private func updateViewportFont() {
+    guard !viewport.isHidden, let terminal = surface.surface else { return }
+    let size = ghostty_surface_size(terminal)
+    let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+    let paragraph = NSMutableParagraphStyle()
+    paragraph.minimumLineHeight = CGFloat(size.cell_height_px) / scale
+    paragraph.maximumLineHeight = paragraph.minimumLineHeight
+    var attributes: [NSAttributedString.Key: Any] = [
+      .foregroundColor: NSColor.textColor, .paragraphStyle: paragraph,
+    ]
+    if let rawFont = ghostty_surface_quicklook_font(terminal) {
+      let font = Unmanaged<CTFont>.fromOpaque(rawFont)
+      attributes[.font] = font.takeUnretainedValue()
+      viewport.textStorage?.setAttributes(
+        attributes, range: NSRange(location: 0, length: viewport.textStorage?.length ?? 0))
+      font.release()
+    } else {
+      viewport.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
+    }
+  }
+}
+
+struct MirrorScrollGesture {
+  private var accumulated: CGFloat = 0
+  private var sentForGesture = false
+  private var lastWheelTime: TimeInterval = -.infinity
+
+  mutating func consume(
+    delta: CGFloat, precise: Bool, phase: NSEvent.Phase, momentum: NSEvent.Phase, timestamp: TimeInterval
+  ) -> MirrorMessage.ScrollDirection? {
+    guard momentum.isEmpty else { return nil }
+    if phase.contains(.began) {
+      accumulated = 0
+      sentForGesture = false
+    }
+    if phase.contains(.ended) || phase.contains(.cancelled) {
+      accumulated = 0
+      sentForGesture = false
+      return nil
+    }
+    guard delta != 0, phase.isEmpty || !sentForGesture else { return nil }
+    if phase.isEmpty, timestamp - lastWheelTime < 0.3 { return nil }
+    if accumulated * delta < 0 { accumulated = 0 }
+    accumulated += delta
+    guard abs(accumulated) >= (precise ? 30 : 1) else { return nil }
+    let direction: MirrorMessage.ScrollDirection = accumulated > 0 ? .upward : .downward
+    accumulated = 0
+    sentForGesture = true
+    lastWheelTime = timestamp
+    return direction
   }
 }

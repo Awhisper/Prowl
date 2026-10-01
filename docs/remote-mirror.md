@@ -99,10 +99,38 @@ A project that has never opened a terminal is not yet a pane, but its worktree i
 available in **New Pane…** on a current Host. The Host terminal owns the
 grid. Mac clients default to **Fit to Window**, shrinking the complete terminal to
 fit without changing the Host PTY. **Original Size** restores readable native-size
-glyphs with local scrolling. It starts at the top; subsequent window resizes preserve
+glyphs with local panning (hold Option while scrolling when remote scrolling is available). It starts at the top; subsequent window resizes preserve
 the manual scroll position within the available bounds. Large Host grids can make
 Fit to Window text small. iOS
 renders replacement text with local reflow. Cleared output is not an archive.
+
+On a Host advertising remote scrolling, **Scroll Up** and **Scroll Down** move
+the live Host terminal by a small wheel step. Mac vertical wheel/trackpad gestures
+use the same controls; one trackpad gesture requests one step. On phones, scroll
+the current text normally, then pull outward at the top for earlier content or
+at the bottom for later content. The new view stays at the corresponding edge.
+Buttons remain available
+when a gesture is inconvenient. Horizontal scrolling remains local.
+
+**Scrolling…** remains visible until a fresh Host frame confirms the request,
+or a five-second timeout ends the wait. A boundary that does not change the frame
+still completes. Requests are never automatically replayed after uncertainty.
+The Host handles scrolling using its terminal's negotiated mouse/alternate-scroll
+mode, aimed at the center of its grid. Application-specific scroll regions or
+bindings can change the distance or response; this is not an exact line-number
+navigation contract. Both devices share the Host view, so scrolling can move the
+Host user's view too. An older Host leaves remote scrolling unavailable.
+
+The Mac client keeps the original styled terminal while an application redraws
+its own screen. When the Host viewport moves into native terminal scrollback,
+it displays **Host scrollback · Plain text** using that viewport's physical rows.
+Returning to the active viewport restores the styled terminal. This is selected
+from terminal state, independent of the Agent being run. The existing Ghostty
+APIs expose scrollback text but not its styles; mobile remains text throughout.
+
+History remains a separate, read-only view. Its scrolling and page loading do not
+send remote scroll input or change the frozen snapshot. No output archive or
+cross-frame text merging is added.
 
 Host samples subscribed panes every 200 ms and allows only one unacknowledged frame
 per subscription. Unchanged frames are omitted; text geometry and truncation are

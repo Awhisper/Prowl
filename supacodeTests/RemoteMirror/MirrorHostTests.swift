@@ -452,6 +452,252 @@ struct MirrorHostTests {
     #expect(issues == 0 && deliveries == 0)
   }
 
+  @Test(.timeLimit(.minutes(1)), arguments: [MirrorMessage.Representation.terminal, .text])
+  func remoteScrollForcesFreshFrameAndDeduplicatesRequests(representation: MirrorMessage.Representation) async throws {
+    let source = Source()
+    let clock = TestClock()
+    let host = MirrorHost(
+      source: source, enabled: true, clock: clock, loadIdentity: { Self.identity }, saveIdentity: { _ in })
+    host.address = "127.0.0.1"
+    host.port = String(try MirrorTestPort.unusedPort())
+    defer { host.stop() }
+    try await MirrorTestPort.startHost(host)
+    let peer = try await Peer(port: UInt16(host.port)!, key: host.pairingKey)
+    defer { peer.connection.close() }
+    var messages = peer.messages.makeAsyncIterator()
+    peer.connection.send(.list)
+    #expect(await messages.next()?.capabilities?.contains("remote-scroll") == true)
+    peer.connection.send(.subscribe(.init(paneID: source.id, representation: representation, intent: .ifFree)))
+    let lease = try #require(await messages.next()?.subscriptionID)
+    let initial = try #require(await messages.next())
+    let initialSequence = try #require(initial.sequence)
+    let request = MirrorMessage.ScrollPayload(requestID: UUID(), direction: .upward, subscriptionID: lease)
+    peer.connection.send(.scroll(request))
+    peer.connection.send(.scroll(request))
+    let busyID = UUID()
+    peer.connection.send(.scroll(.init(requestID: busyID, direction: .downward, subscriptionID: lease)))
+    let busy = try #require(await messages.next())
+    #expect(busy.error?.hasPrefix("SCROLL_BUSY:") == true)
+    #expect(busy.scrollRequestID == busyID)
+    #expect(busy.subscriptionID == lease)
+    #expect(source.scrolls == [.upward])
+    await clock.advance(by: .milliseconds(200))
+    // Scroll completion must respect the original outstanding frame's ACK.
+    peer.connection.send(.list)
+    #expect(await messages.next()?.kind == .panes)
+    peer.connection.send(.acknowledge(.init(sequence: initialSequence, subscriptionID: lease)))
+    peer.connection.send(.list)
+    #expect(await messages.next()?.kind == .panes)
+    await clock.advance(by: .milliseconds(600))
+    let changed = try #require(await messages.next())
+    let result = try #require(await messages.next())
+    #expect(changed.kind == initial.kind)
+    #expect(changed.sequence == initialSequence + 1)
+    #expect(changed.frame == initial.frame)
+    #expect(changed.text == initial.text)
+    #expect(result.kind == .scrollResult)
+    #expect(result.sequence == changed.sequence)
+    #expect(result.scrollRequestID == request.requestID)
+    #expect(result.subscriptionID == lease)
+    peer.connection.send(.scroll(request))
+    let replay = try #require(await messages.next())
+    #expect(replay.kind == .scrollResult)
+    #expect(replay.sequence == result.sequence)
+    #expect(source.scrolls == [.upward])
+    peer.connection.send(.acknowledge(.init(sequence: try #require(changed.sequence), subscriptionID: lease)))
+    let downID = UUID()
+    peer.connection.send(.scroll(.init(requestID: downID, direction: .downward, subscriptionID: lease)))
+    peer.connection.send(.list)
+    #expect(await messages.next()?.kind == .panes)
+    await clock.advance(by: .milliseconds(800))
+    let downFrame = try #require(await messages.next())
+    let downResult = try #require(await messages.next())
+    #expect(downFrame.sequence == initialSequence + 2)
+    #expect(downResult.scrollRequestID == downID)
+    #expect(downResult.sequence == downFrame.sequence)
+    #expect(source.scrolls == [.upward, .downward])
+    #expect(source.input.isEmpty)
+  }
+
+  @Test(.timeLimit(.minutes(1)), arguments: [false, true])
+  func unavailableScrollReturnsCorrelatedFailureWithoutClosingConnection(fails: Bool) async throws {
+    let source = Source()
+    source.supportsRemoteScroll = fails
+    source.scrollUnavailable = fails
+    let host = MirrorHost(source: source, enabled: true, loadIdentity: { Self.identity }, saveIdentity: { _ in })
+    host.address = "127.0.0.1"
+    host.port = String(try MirrorTestPort.unusedPort())
+    defer { host.stop() }
+    try await MirrorTestPort.startHost(host)
+    let peer = try await Peer(port: UInt16(host.port)!, key: host.pairingKey)
+    defer { peer.connection.close() }
+    var messages = peer.messages.makeAsyncIterator()
+    peer.connection.send(.list)
+    #expect(await messages.next()?.capabilities?.contains("remote-scroll") == fails)
+    peer.connection.send(.subscribe(.init(paneID: source.id, representation: .text, intent: .ifFree)))
+    let lease = try #require(await messages.next()?.subscriptionID)
+    #expect(await messages.next()?.kind == .textFrame)
+    let request = MirrorMessage.ScrollPayload(requestID: UUID(), direction: .upward, subscriptionID: lease)
+    for _ in 0..<2 {
+      peer.connection.send(.scroll(request))
+      let failure = try #require(await messages.next())
+      #expect(failure.error?.hasPrefix("SCROLL_UNAVAILABLE:") == true)
+      #expect(failure.scrollRequestID == request.requestID)
+      #expect(failure.subscriptionID == lease)
+    }
+    #expect(source.scrolls.count == (fails ? 1 : 0))
+    peer.connection.send(.history(.init(historyID: nil, offset: nil, subscriptionID: lease)))
+    #expect(await messages.next()?.lines == ["earlier", "now"])
+    #expect(source.input.isEmpty)
+  }
+
+  @Test(.timeLimit(.minutes(1))) func scrollRejectsStaleLeaseBeforeSendingInput() async throws {
+    let source = Source()
+    let host = MirrorHost(source: source, enabled: true, loadIdentity: { Self.identity }, saveIdentity: { _ in })
+    host.address = "127.0.0.1"
+    host.port = String(try MirrorTestPort.unusedPort())
+    defer { host.stop() }
+    try await MirrorTestPort.startHost(host)
+    let peer = try await Peer(port: UInt16(host.port)!, key: host.pairingKey)
+    defer { peer.connection.close() }
+    var messages = peer.messages.makeAsyncIterator()
+    peer.connection.send(.subscribe(.init(paneID: source.id, representation: .text, intent: .ifFree)))
+    #expect(await messages.next()?.kind == .subscribed)
+    #expect(await messages.next()?.kind == .textFrame)
+    peer.connection.send(.scroll(.init(requestID: UUID(), direction: .upward, subscriptionID: UUID())))
+    #expect(await messages.next() == nil)
+    #expect(source.scrolls.isEmpty)
+    #expect(source.input.isEmpty)
+  }
+
+  @Test(.timeLimit(.minutes(1)), arguments: [false, true])
+  func viewportMetadataRequiresTerminalOptIn(optedIn: Bool) async throws {
+    let source = Source()
+    source.viewportText = "earlier"
+    let clock = TestClock()
+    let host = MirrorHost(
+      source: source, enabled: true, clock: clock, loadIdentity: { Self.identity }, saveIdentity: { _ in })
+    host.address = "127.0.0.1"
+    host.port = String(try MirrorTestPort.unusedPort())
+    defer { host.stop() }
+    try await MirrorTestPort.startHost(host)
+    let peer = try await Peer(port: UInt16(host.port)!, key: host.pairingKey)
+    defer { peer.connection.close() }
+    var messages = peer.messages.makeAsyncIterator()
+    peer.connection.send(.list)
+    #expect(await messages.next()?.capabilities?.contains("viewport-text-v1") == true)
+    peer.connection.send(
+      .subscribe(.init(paneID: source.id, representation: .terminal, intent: .ifFree, includeViewportText: optedIn)))
+    let lease = try #require(await messages.next()?.subscriptionID)
+    if optedIn {
+      let viewport = try #require(await messages.next())
+      #expect(viewport.kind == .viewport)
+      #expect(viewport.viewportText == "earlier")
+      #expect(viewport.sequence == 1)
+      #expect(viewport.subscriptionID == lease)
+    }
+    #expect(await messages.next()?.kind == .frame)
+    peer.connection.send(.acknowledge(.init(sequence: 1, subscriptionID: lease)))
+    peer.connection.send(.list)
+    #expect(await messages.next()?.kind == .panes)
+    source.viewportText = ""
+    await clock.advance(by: .milliseconds(200))
+    if optedIn {
+      #expect(await messages.next()?.viewportText == "")
+      #expect(await messages.next()?.sequence == 2)
+      peer.connection.send(.acknowledge(.init(sequence: 2, subscriptionID: lease)))
+      peer.connection.send(.list)
+      #expect(await messages.next()?.kind == .panes)
+      source.viewportText = nil
+      await clock.advance(by: .milliseconds(200))
+      let clear = try #require(await messages.next())
+      #expect(clear.kind == .viewport)
+      #expect(clear.viewportText == nil)
+      #expect(clear.sequence == 3)
+      #expect(await messages.next()?.sequence == 3)
+    }
+    // An old terminal client never receives the additive control, including
+    // when only native scrollback changes and the active VT bytes stay equal.
+    peer.connection.send(.list)
+    #expect(await messages.next()?.kind == .panes)
+  }
+
+  @Test(.timeLimit(.minutes(1))) func textSubscriptionNeverReceivesViewportMetadata() async throws {
+    let source = Source()
+    source.viewportText = "earlier"
+    let host = MirrorHost(source: source, enabled: true, loadIdentity: { Self.identity }, saveIdentity: { _ in })
+    host.address = "127.0.0.1"
+    host.port = String(try MirrorTestPort.unusedPort())
+    defer { host.stop() }
+    try await MirrorTestPort.startHost(host)
+    let peer = try await Peer(port: UInt16(host.port)!, key: host.pairingKey)
+    defer { peer.connection.close() }
+    var messages = peer.messages.makeAsyncIterator()
+    peer.connection.send(
+      .subscribe(.init(paneID: source.id, representation: .text, intent: .ifFree, includeViewportText: true)))
+    #expect(await messages.next()?.kind == .subscribed)
+    #expect(await messages.next()?.kind == .textFrame)
+    peer.connection.send(.list)
+    #expect(await messages.next()?.kind == .panes)
+  }
+
+  @Test(.timeLimit(.minutes(1)), arguments: [1, 20])
+  func inconsistentCaptureRetriesAreBounded(failures: Int) async throws {
+    let source = Source()
+    source.unstableCaptures = failures
+    let clock = TestClock()
+    let host = MirrorHost(
+      source: source, enabled: true, clock: clock, loadIdentity: { Self.identity }, saveIdentity: { _ in })
+    host.address = "127.0.0.1"
+    host.port = String(try MirrorTestPort.unusedPort())
+    defer { host.stop() }
+    try await MirrorTestPort.startHost(host)
+    let peer = try await Peer(port: UInt16(host.port)!, key: host.pairingKey)
+    defer { peer.connection.close() }
+    var messages = peer.messages.makeAsyncIterator()
+    peer.connection.send(.subscribe(.init(paneID: source.id, representation: .terminal, intent: .ifFree)))
+    #expect(await messages.next()?.kind == .subscribed)
+    await clock.advance(by: .seconds(2))
+    if failures == 1 {
+      #expect(await messages.next()?.kind == .frame)
+    } else {
+      #expect(await messages.next() == nil)
+      #expect(source.unstableCaptures == failures - 10)
+    }
+  }
+
+  @Test(.timeLimit(.minutes(1))) func failedFrameSendDoesNotResurrectClosedLease() async throws {
+    let source = Source()
+    let clock = TestClock()
+    let host = MirrorHost(
+      source: source, enabled: true, clock: clock, loadIdentity: { Self.identity }, saveIdentity: { _ in })
+    host.address = "127.0.0.1"
+    host.port = String(try MirrorTestPort.unusedPort())
+    defer { host.stop() }
+    try await MirrorTestPort.startHost(host)
+    let peer = try await Peer(port: UInt16(host.port)!, key: host.pairingKey)
+    defer { peer.connection.close() }
+    var messages = peer.messages.makeAsyncIterator()
+    peer.connection.send(.subscribe(.init(paneID: source.id, representation: .terminal, intent: .ifFree)))
+    let lease = try #require(await messages.next()?.subscriptionID)
+    #expect(await messages.next()?.sequence == 1)
+    peer.connection.send(.acknowledge(.init(sequence: 1, subscriptionID: lease)))
+    peer.connection.send(.list)
+    #expect(await messages.next()?.kind == .panes)
+    source.frameBytes = Data(repeating: 65, count: MirrorWire.maximumPayload)
+    await clock.advance(by: .milliseconds(200))
+    #expect(await messages.next() == nil)
+    #expect(host.subscriberCount == 0)
+    source.frameBytes = Data("thinking".utf8)
+    let replacement = try await Peer(port: UInt16(host.port)!, key: host.pairingKey)
+    defer { replacement.connection.close() }
+    var replacementMessages = replacement.messages.makeAsyncIterator()
+    replacement.connection.send(.subscribe(.init(paneID: source.id, representation: .terminal, intent: .ifFree)))
+    #expect(await replacementMessages.next()?.kind == .subscribed)
+    #expect(await replacementMessages.next()?.kind == .frame)
+    #expect(host.subscriberCount == 1)
+  }
+
   @MainActor private final class Source: MirrorPaneSource {
     let id = UUID()
     let otherID = UUID()
@@ -459,7 +705,19 @@ struct MirrorHostTests {
     var reads = 0
     var input = Data()
     var text = "thinking"
+    var frameBytes = Data("thinking".utf8)
     var textUnavailable = false
+    var supportsViewportText = true
+    var viewportText: String?
+    var unstableCaptures = 0
+    var supportsRemoteScroll = true
+    var scrollUnavailable = false
+    var scrolls: [MirrorMessage.ScrollDirection] = []
+    func scroll(_ direction: MirrorMessage.ScrollDirection, to id: UUID) throws {
+      #expect(id == self.id)
+      scrolls.append(direction)
+      if scrollUnavailable { throw MirrorProtocolError.invalidMessage }
+    }
     func activeText(_ id: UUID) throws -> String {
       if textUnavailable { throw MirrorProtocolError.invalidMessage }
       reads += 1
@@ -472,7 +730,11 @@ struct MirrorHostTests {
     }
     func snapshot(_ id: UUID) throws -> MirrorFrame {
       reads += 1
-      return MirrorFrame(columns: 80, rows: 24, bytes: Data("thinking".utf8))
+      if unstableCaptures > 0 {
+        unstableCaptures -= 1
+        throw MirrorPaneSourceError.captureChanged
+      }
+      return MirrorFrame(columns: 80, rows: 24, bytes: frameBytes, viewportText: viewportText)
     }
     func write(_ bytes: Data, to id: UUID) throws { input.append(bytes) }
     var supportsBoundedHistory: Bool { true }

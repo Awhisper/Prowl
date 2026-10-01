@@ -14,6 +14,195 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct MirrorTerminalIntegrationTests {
+  @Test(.timeLimit(.minutes(1))) func remoteScrollMovesRealViewportAndPreservesFrozenHistory() async throws {
+    let fixture = try Fixture()
+    defer { fixture.close() }
+    try await fixture.wait("Host program ready") { fixture.hostText.contains("READY") }
+    try await fixture.startHost()
+    let client = try await fixture.connect()
+    try fixture.send("history")
+    try await fixture.waitForMirror(client, containing: "HISTORY:450")
+    try #require(client.supportsRemoteScroll)
+    client.loadHistory(refresh: true)
+    try await fixture.wait("Frozen history") { !client.isLoadingHistory }
+    let history = client.historyLines
+    let offset = client.historyOffset
+    client.showsHistory = false
+    let replica = try #require(client.replica.view)
+    let window = try #require(replica.window)
+    let store = RemoteMirrorStore(manager: fixture.manager, runtime: fixture.runtime)
+    let hosting = NSHostingView(rootView: RemoteMirrorPaneView(client: client).environment(store))
+    let container = NSView(frame: try #require(window.contentView).bounds)
+    hosting.frame = container.bounds
+    hosting.autoresizingMask = [.width, .height]
+    container.addSubview(hosting)
+    window.contentView = container
+    func textView(_ view: NSView) -> NSTextView? {
+      if let text = view as? NSTextView, text.accessibilityIdentifier() == "remote-mirror-viewport-text" { return text }
+      return view.subviews.lazy.compactMap { textView($0) }.first
+    }
+    try await fixture.wait("Mounted viewport overlay") { textView(hosting) != nil }
+    let overlay = try #require(textView(hosting))
+    #expect(overlay.isHidden)
+    client.scroll(.upward)
+    #expect(client.scrollState.isLoading)
+    try await fixture.wait("Earlier remote viewport") {
+      !client.scrollState.isLoading && client.viewportState.text != nil
+    }
+    #expect(client.scrollState.error == nil)
+    let earlier = try #require(client.viewportState.text)
+    #expect(earlier.contains("HISTORY:"))
+    #expect(!earlier.contains("HISTORY:450"))
+    // Original Ghostty snapshots remain the styled active screen. The paired
+    // overlay is what presents native scrollback on Mac, without replaying it.
+    #expect(fixture.replicaText(client).contains("HISTORY:450"))
+    #expect(earlier == (try fixture.source.snapshot(fixture.hostView.id)).viewportText)
+    #expect(
+      earlier.trimmingCharacters(in: .newlines)
+        == (try fixture.source.textSnapshot(fixture.hostView.id)).text.trimmingCharacters(in: .newlines))
+    try await fixture.wait("Observable pane presents viewport overlay") {
+      !overlay.isHidden && overlay.string == earlier
+    }
+    try verifyOverlayPreservesOtherInputFocus(overlay, container: container, window: window)
+    hosting.layoutSubtreeIfNeeded()
+    let bitmap = try #require(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+    hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+    let image = try #require(bitmap.representation(using: .png, properties: [:]))
+    try image.write(to: URL(filePath: "/tmp/prowl-scroll-mac-native.png"))
+    #expect(client.historyLines == history)
+    #expect(client.historyOffset == offset)
+    client.scroll(.downward)
+    try await fixture.wait("Latest remote viewport") {
+      !client.scrollState.isLoading && client.viewportState.text == nil
+    }
+    try await fixture.wait("Observable pane restores styled active screen") { overlay.isHidden }
+    // A scrolled blank screen is still an overlay, not the nil clear signal.
+    let viewport = try #require(overlay.enclosingScrollView as? MirrorTerminalScrollView)
+    viewport.updateViewportText("")
+    try await fixture.wait("Blank overlay remains visible") { !overlay.isHidden && overlay.string.isEmpty }
+    client.scroll(.downward)
+    try await fixture.wait("No-op boundary scroll completes") { !client.scrollState.isLoading }
+    #expect(client.scrollState.error == nil)
+    #expect(client.isSubscribed)
+    #expect(client.historyLines == history)
+  }
+
+  private func verifyOverlayPreservesOtherInputFocus(_ overlay: NSTextView, container: NSView, window: NSWindow)
+    throws
+  {
+    let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 180, height: 24))
+    container.addSubview(input)
+    defer { input.removeFromSuperview() }
+    try #require(window.makeFirstResponder(input))
+    let responder = try #require(window.firstResponder)
+    let shortcut = try #require(
+      NSEvent.keyEvent(
+        with: .keyDown, location: .zero, modifierFlags: .command, timestamp: 0,
+        windowNumber: window.windowNumber, context: nil, characters: "f", charactersIgnoringModifiers: "f",
+        isARepeat: false, keyCode: 3))
+    _ = overlay.performKeyEquivalent(with: shortcut)
+    #expect(window.firstResponder === responder)
+  }
+
+  @Test(.timeLimit(.minutes(1))) func remoteScrollReachesAlternateScreenApplication() async throws {
+    let fixture = try Fixture()
+    defer { fixture.close() }
+    try await fixture.wait("Host program ready") { fixture.hostText.contains("READY") }
+    try await fixture.startHost()
+    let client = try await fixture.connect()
+    try fixture.send("scroll-tui")
+    try await fixture.waitForMirror(client, containing: "TUI-READY")
+    client.scroll(.upward)
+    try await fixture.waitForMirror(client, containing: "TUI-UP")
+    try await fixture.wait("TUI up completed") { !client.scrollState.isLoading }
+    #expect(client.scrollState.error == nil)
+    client.scroll(.downward)
+    try await fixture.waitForMirror(client, containing: "TUI-DOWN")
+    try await fixture.wait("TUI down completed") { !client.scrollState.isLoading }
+    #expect(client.scrollState.error == nil)
+  }
+
+  @Test(.timeLimit(.minutes(1))) func textWireScrollsRealViewportAndKeepsHistorySnapshot() async throws {
+    let fixture = try Fixture()
+    defer { fixture.close() }
+    try await fixture.wait("Host program ready") { fixture.hostText.contains("READY") }
+    try fixture.send("history")
+    try await fixture.wait("Host history ready") { fixture.hostText.contains("HISTORY:450") }
+    try await fixture.startHost()
+    let connection = MirrorRemoteConnection(
+      configuration: .init(
+        address: "127.0.0.1", port: UInt16(fixture.host.port)!, pairingKey: "", credential: fixture.credential),
+      restore: { _ in nil }, persist: { _ in })
+    defer { connection.close() }
+    var messages: [MirrorMessage] = []
+    connection.onReady = {
+      connection.send(.subscribe(.init(paneID: fixture.hostView.id, representation: .text, intent: .ifFree)))
+    }
+    connection.onMessage = { message in
+      messages.append(message)
+      if case .textFrame(let frame) = message {
+        connection.send(.acknowledge(.init(sequence: frame.sequence, subscriptionID: frame.subscriptionID)))
+      }
+    }
+    connection.start()
+    try await fixture.wait("Mobile initial frame") { messages.last?.text?.contains("HISTORY:450") == true }
+    let lease = try #require(messages.first?.subscriptionID)
+    connection.send(.history(.init(historyID: nil, offset: nil, subscriptionID: lease)))
+    try await fixture.wait("Mobile frozen history") { messages.last?.kind == .historyPage }
+    let history = try #require(messages.last)
+    let upward = UUID()
+    connection.send(.scroll(.init(requestID: upward, direction: .upward, subscriptionID: lease)))
+    try await fixture.wait("Mobile earlier viewport result") {
+      messages.contains { $0.kind == .scrollResult && $0.scrollRequestID == upward }
+    }
+    let earlier = try #require(messages.last { $0.kind == .textFrame })
+    #expect(earlier.text?.contains("HISTORY:450") == false)
+    #expect(earlier.text == (try fixture.source.textSnapshot(fixture.hostView.id)).text)
+    #expect(messages.last?.sequence == earlier.sequence)
+    let downward = UUID()
+    connection.send(.scroll(.init(requestID: downward, direction: .downward, subscriptionID: lease)))
+    try await fixture.wait("Mobile latest viewport result") {
+      messages.contains { $0.kind == .scrollResult && $0.scrollRequestID == downward }
+    }
+    #expect(messages.last { $0.kind == .textFrame }?.text?.contains("HISTORY:450") == true)
+    connection.send(.history(.init(historyID: history.historyID, offset: nil, subscriptionID: lease)))
+    try await fixture.wait("Mobile retained frozen history") { messages.last?.kind == .historyPage }
+    #expect(messages.last?.lines == history.lines)
+    #expect(messages.last?.historyID == history.historyID)
+    #expect(!messages.contains { $0.kind == .viewport || $0.kind == .frame || $0.kind == .failure })
+  }
+
+  @Test(.timeLimit(.minutes(1))) func viewportRowsPreserveWideCharacterWrapsAndResize() async throws {
+    let fixture = try Fixture()
+    defer { fixture.close() }
+    try await fixture.wait("Host program ready") { fixture.hostText.contains("READY") }
+    try fixture.send("wrapped")
+    try await fixture.wait("Wrapped output ready") { fixture.hostText.contains("W250") }
+    try fixture.source.scroll(.upward, to: fixture.hostView.id)
+    var captured: MirrorFrame?
+    try await fixture.wait("Wrapped viewport capture") {
+      do {
+        captured = try fixture.source.snapshot(fixture.hostView.id)
+        return captured?.viewportText != nil
+      } catch MirrorPaneSourceError.captureChanged { return false }
+    }
+    let first = try #require(captured)
+    let text = try #require(first.viewportText)
+    #expect(text.contains("界🙂X"))
+    #expect(text.split(separator: "\n", omittingEmptySubsequences: false).count == Int(first.rows))
+    fixture.hostView.setFrameSize(NSSize(width: 480, height: 420))
+    fixture.hostView.updateSurfaceSize()
+    try await fixture.wait("Reflow viewport capture") {
+      do {
+        captured = try fixture.source.snapshot(fixture.hostView.id)
+        return captured?.columns != first.columns && captured?.viewportText != nil
+      } catch MirrorPaneSourceError.captureChanged { return false }
+    }
+    let reflowed = try #require(captured)
+    let reflowedText = try #require(reflowed.viewportText)
+    #expect(reflowedText.split(separator: "\n", omittingEmptySubsequences: false).count == Int(reflowed.rows))
+  }
+
   @Test(.timeLimit(.minutes(1))) func initialHostStartRecoversFromOccupiedPort() async throws {
     let fixture = try Fixture()
     defer { fixture.close() }
@@ -693,6 +882,24 @@ struct MirrorTerminalIntegrationTests {
           think) printf '\033[2J\033[H\033[31mTHINKING:思考中\033[0m\033[4;7H';;
           finish) printf '\033[2J\033[H\033[32mFINAL:结论\033[0m\033[2;3H';;
           history) for ((n=1; n<=450; n++)); do printf 'HISTORY:%03d\n' "$n"; done;;
+          wrapped)
+            columns=$(stty size); columns=${columns##* }
+            for ((n=1; n<=250; n++)); do
+              printf 'W%03d' "$n"
+              printf '%*s' "$((columns-5))" ''
+              printf '界🙂X\n'
+            done
+            ;;
+          scroll-tui)
+            stty raw -echo
+            printf '\033[?1049h\033[?1007h\033[2J\033[HTUI-READY'
+            while IFS= read -r -n 3 key; do
+              case "$key" in
+                $'\033[A') printf '\033[2J\033[HTUI-UP';;
+                $'\033[B') printf '\033[2J\033[HTUI-DOWN';;
+              esac
+            done
+            ;;
           bytes)
             stty raw -echo
             printf '\r\nBINARY_READY\r\n'

@@ -21,7 +21,7 @@ Select an open pane, or New Agent Pane → workspace → available Host Agent Pr
 → optional initial message. Models and permissions come from that Profile. There
 is no private AI console or dependency on personal shell wrappers.
 
-- Active text replaces the last snapshot; it is not an append-only transcript.
+- Live text replaces the last viewport snapshot; it is not an append-only transcript.
 - Markdown emphasis/inline code, code fences and tables have readable previews;
   expanding code/table freezes the detail and supports copying the original text.
 - Multiline input sends only on Send or two physical Returns within 350 ms.
@@ -34,6 +34,15 @@ is no private AI console or dependency on personal shell wrappers.
   If another client claims a free pane before Mirror completes, Android reports it busy.
 - History is a bounded frozen snapshot with earlier-page loading. Returning to Live
   keeps receiving current output. Closing a mirror never stops the Host program.
+- Hosts with `remote-scroll` also show **Scroll up / Scroll down** in Live. Pull
+  outward from the top or bottom of the current text to request a bounded scroll step;
+  ordinary local scrolling, horizontal gestures and History do not send remote input.
+  These actions scroll the actual Host pane, including a terminal application's own
+  scroll handling, so the distance depends on that application. One request runs at
+  a time with a loading indicator; an unchanged screen also completes normally.
+  Requests time out after five seconds and are never replayed after reconnecting.
+  After scrolling up, reading continues at the newly revealed top edge;
+  scrolling down moves to the bottom edge. Automatic following is paused by remote scrolling.
 - Saving credentials does not persist terminal output or drafts across process death.
   Rotation retains the current ViewModel; reopening the app offers saved Hosts.
 

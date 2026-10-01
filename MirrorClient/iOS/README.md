@@ -48,6 +48,23 @@ History reads 200-line pages from a frozen retained snapshot, with a 2 MiB budge
 Each pane keeps separate live/history reading positions. Erased transient output
 is not archived. Ghostty is not embedded in this client.
 
+On Hosts advertising `remote-scroll`, **Scroll Up** and **Scroll Down** move the
+Host pane by a small, bounded scroll amount. Pull downward past the top of the live text, or
+upward past its bottom, for the same action. Ordinary scrolling within the local
+text remains local, and long presses keep native text selection. These controls
+operate the Host's current terminal/application view; they are separate from History,
+whose frozen snapshots and paging are unchanged.
+Applications decide how terminal scroll input is handled, so the exact distance
+can vary. Remote scrolling changes the view seen on Host as well.
+
+One scroll waits for a fresh screen and matching Host acknowledgement; a spinner
+ends after five seconds if no confirmation arrives. Timed-out or disconnected
+scrolls are never replayed automatically. A fresh capture does not prove that the
+application moved, including when it is already at the beginning or end. Following
+latest text pauses during remote scrolling. After scrolling up, the local reader
+starts at the top of the returned screen; after scrolling down, it starts at the
+bottom. Older Hosts keep working with remote scroll controls disabled.
+
 The composer is one line when unfocused, expands while editing, then scrolls at its
 height limit. Send is explicit; Return inserts a newline. Two physical Returns
 within 350 ms send when enabled, removing only the shortcut's first newline.

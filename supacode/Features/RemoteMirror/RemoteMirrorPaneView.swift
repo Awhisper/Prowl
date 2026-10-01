@@ -58,11 +58,16 @@ struct RemoteMirrorPaneView: View {
       if let error = client.error {
         Text(error).font(.callout).foregroundStyle(.secondary).padding(10).textSelection(.enabled)
       }
+      if !client.showsHistory { scrollControls }
       ZStack {
         if let view = client.replica.view {
-          MirrorTerminalViewport(surface: view, displaySize: client.replica.displaySize, fitsWindow: fitsWindow)
-            .opacity(client.showsHistory ? 0 : 1)
-            .allowsHitTesting(!client.showsHistory)
+          MirrorTerminalViewport(
+            surface: view, displaySize: client.replica.displaySize, fitsWindow: fitsWindow,
+            viewportText: client.viewportState.text,
+            onRemoteScroll: client.supportsRemoteScroll && !client.showsHistory ? { client.scroll($0) } : nil
+          )
+          .opacity(client.showsHistory ? 0 : 1)
+          .allowsHitTesting(!client.showsHistory)
         } else {
           ProgressView("Opening mirror…")
         }
@@ -155,6 +160,31 @@ struct RemoteMirrorPaneView: View {
   }
 
   private var endpoint: String { "\(client.address):\(String(client.port))" }
+
+  private var scrollControls: some View {
+    HStack(spacing: 12) {
+      if client.scrollState.isLoading {
+        ProgressView("Scrolling…").controlSize(.small)
+      } else if let error = client.scrollState.error {
+        Text(error).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+      } else if client.viewportState.text != nil {
+        Text("Host scrollback · Plain text").font(.caption).foregroundStyle(.secondary)
+      }
+      Spacer(minLength: 0)
+      Button("Scroll Up", systemImage: "chevron.up") { client.scroll(.upward) }
+        .help("Scroll the Host terminal up; distance depends on the running program")
+        .accessibilityIdentifier("remote-mirror-scroll-up")
+      Button("Scroll Down", systemImage: "chevron.down") { client.scroll(.downward) }
+        .help("Scroll the Host terminal down; distance depends on the running program")
+        .accessibilityIdentifier("remote-mirror-scroll-down")
+    }
+    .disabled(!client.canScroll)
+    .padding(.horizontal).padding(.vertical, 6)
+    .help(
+      client.supportsRemoteScroll
+        ? "Scroll controls the Host terminal. Hold Option while scrolling to pan the local display."
+        : "Update Host to enable remote scrolling.")
+  }
 
   private var history: some View {
     VStack(alignment: .leading) {

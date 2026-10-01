@@ -285,6 +285,8 @@ private struct MirrorReadingView: View {
   @State private var position: ScrollPosition
   @State private var observedInitialPosition = false
   @State private var isEditing = false
+  @State private var scrollGeometry = MirrorRemoteScrollGesture(offset: 0, maximumOffset: 0)
+  @State private var dragStart: MirrorRemoteScrollGesture?
 
   init(session: MirrorSession) {
     self.session = session
@@ -340,7 +342,10 @@ private struct MirrorReadingView: View {
           }
           .scrollPosition($position)
           .accessibilityIdentifier("mirror-live-scroll")
-          .onDisappear { observedInitialPosition = false }
+          .onDisappear {
+            observedInitialPosition = false
+            dragStart = nil
+          }
           .onAppear {
             if session.followsLatest {
               position.scrollTo(edge: .bottom)
@@ -348,26 +353,76 @@ private struct MirrorReadingView: View {
               position.scrollTo(y: session.liveReadingOffset)
             }
           }
-          .onScrollGeometryChange(for: CGFloat.self) { geometry in
-            max(0, geometry.contentOffset.y + geometry.contentInsets.top)
-          } action: { _, offset in
-            if observedInitialPosition { session.liveReadingOffset = offset }
+          .onScrollGeometryChange(for: MirrorRemoteScrollGesture.self) { geometry in
+            MirrorRemoteScrollGesture(
+              offset: max(0, geometry.contentOffset.y + geometry.contentInsets.top),
+              maximumOffset: max(
+                0,
+                geometry.contentSize.height + geometry.contentInsets.top + geometry.contentInsets.bottom
+                  - geometry.containerSize.height))
+          } action: { _, geometry in
+            scrollGeometry = geometry
+            if observedInitialPosition { session.liveReadingOffset = geometry.offset }
             observedInitialPosition = true
           }
           .onScrollPhaseChange { _, phase in
+            if phase == .tracking { dragStart = scrollGeometry }
             if phase == .interacting { session.followsLatest = false }
           }
+          .simultaneousGesture(
+            // A long press belongs to text selection, even if its finger later crosses a scroll edge.
+            LongPressGesture()
+              .exclusively(before: DragGesture(minimumDistance: 16))
+              .onChanged { value in
+                if case .second = value, dragStart == nil { dragStart = scrollGeometry }
+              }
+              .onEnded { value in
+                defer { dragStart = nil }
+                guard case .second(let gesture) = value else { return }
+                if let direction = dragStart?.direction(translation: gesture.translation) {
+                  session.scroll(direction)
+                }
+              }
+          )
           .onChange(of: session.revision) { _, _ in
             if session.followsLatest { proxy.scrollTo("latest", anchor: .bottom) }
           }
+          .onChange(of: session.completedScroll) { _, completion in
+            guard let completion else { return }
+            position.scrollTo(edge: completion.direction == .upward ? .top : .bottom)
+          }
           .safeAreaInset(edge: .bottom) {
-            HStack {
-              Toggle("Follow latest", isOn: $session.followsLatest).toggleStyle(.button)
-              Spacer()
-              Button("Latest") {
-                session.followsLatest = true
-                proxy.scrollTo("latest", anchor: .bottom)
+            VStack(alignment: .leading, spacing: 8) {
+              HStack {
+                Button("Scroll Up", systemImage: "arrow.up") { session.scroll(.upward) }
+                  .accessibilityIdentifier("mirror-scroll-up")
+                  .help("Scroll the Host pane toward earlier output")
+                Spacer()
+                if session.isScrolling {
+                  ProgressView("Scrolling…").accessibilityIdentifier("mirror-scroll-progress")
+                }
+                Spacer()
+                Button("Scroll Down", systemImage: "arrow.down") { session.scroll(.downward) }
+                  .accessibilityIdentifier("mirror-scroll-down")
+                  .help("Scroll the Host pane toward later output")
               }
+              .disabled(!session.canScroll)
+              if let error = session.scrollError {
+                Text(error).foregroundStyle(.secondary)
+              } else if session.status == .live && !session.supportsRemoteScroll {
+                Text("Update Host to enable remote scrolling.").foregroundStyle(.secondary)
+              } else if session.status == .live {
+                Text("Pull past either text edge to scroll the Host pane.").foregroundStyle(.secondary)
+              }
+              HStack {
+                Toggle("Follow latest", isOn: $session.followsLatest).toggleStyle(.button)
+                Spacer()
+                Button("Latest") {
+                  session.followsLatest = true
+                  proxy.scrollTo("latest", anchor: .bottom)
+                }
+              }
+              .disabled(session.isScrolling)
             }
             .font(.caption).padding(.horizontal).padding(.vertical, 8).background(.bar)
           }

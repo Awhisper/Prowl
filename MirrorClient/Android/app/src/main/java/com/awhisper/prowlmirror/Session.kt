@@ -47,7 +47,13 @@ data class SessionState(
     val loadingHistory: Boolean = false,
     val showsHistory: Boolean = false,
     val follow: Boolean = true,
+    val scrolling: ScrollDirection? = null,
+    val scrollCompletion: ScrollCompletion? = null,
 ) {
+    val canScrollRemote: Boolean
+        get() = status == Status.live && "remote-scroll" in capabilities &&
+            !showsHistory && scrolling == null
+
     val canSend: Boolean
         get() =
             status == Status.live &&
@@ -133,6 +139,14 @@ class Session(
     private val historyGate = HistoryGate()
     private var historyTimeout: Job? = null
     private var commandPending: Pair<String, CompletableDeferred<JsonObject>>? = null
+    private var scrollTimeout: Job? = null
+    private data class ScrollRequest(
+        val id: String,
+        val lease: String,
+        val direction: ScrollDirection,
+        val sequence: Long,
+    )
+    private var scrollRequest: ScrollRequest? = null
 
     private data class Submission(
         val id: String,
@@ -213,6 +227,7 @@ class Session(
     }
 
     private fun detach() {
+        clearScroll()
         historyTimeout?.cancel()
         state.update { it.copy(loadingHistory = false) }
         generation++
@@ -320,6 +335,7 @@ class Session(
     }
 
     private fun subscribe() {
+        clearScroll()
         val pane = state.value.pane ?: return
         lease = null
         state.update { it.copy(status = Status.subscribing, sequence = 0) }
@@ -435,6 +451,7 @@ class Session(
     fun loadHistory(refresh: Boolean = false) {
         val active = lease ?: return
         if (state.value.loadingHistory || "history" !in state.value.capabilities) return
+        clearScroll()
         if (refresh) {
             historyGate.reset()
             state.update { it.copy(history = emptyList()) }
@@ -463,6 +480,49 @@ class Session(
                         it.copy(loadingHistory = false, error = "History timed out. Retry history.")
                     }
             }
+    }
+
+    fun scrollRemote(direction: ScrollDirection) {
+        val active = lease ?: return
+        if (!state.value.canScrollRemote) return
+        val request = ScrollRequest(uuid(), active, direction, state.value.sequence)
+        scrollRequest = request
+        state.update {
+            it.copy(scrolling = direction, scrollCompletion = null, follow = false, error = null)
+        }
+        scrollTimeout = scope.launch {
+            delay(5_000)
+            if (scrollRequest?.id == request.id) {
+                clearScroll()
+                state.update {
+                    it.copy(error = "Remote scroll timed out. Check the current screen before trying again.")
+                }
+            }
+        }
+        send(control("scroll", obj(
+            "requestID" to request.id,
+            "direction" to direction.wireName,
+            "subscriptionID" to active,
+        )))
+    }
+
+    private fun clearScroll() {
+        scrollTimeout?.cancel()
+        scrollTimeout = null
+        scrollRequest = null
+        state.update { it.copy(scrolling = null, scrollCompletion = null) }
+    }
+
+    private fun scrollResult(p: JsonObject) {
+        val request = scrollRequest ?: return
+        if (canonical(p.string("requestID")) != request.id ||
+            canonical(p.string("subscriptionID")) != request.lease) return
+        val sequence = p.longInteger("sequence")
+        require(sequence > request.sequence && sequence <= state.value.sequence) {
+            "Remote scroll result has no matching frame"
+        }
+        clearScroll()
+        state.update { it.copy(scrollCompletion = ScrollCompletion(request.id, request.direction)) }
     }
 
     private fun receive(packet: Packet) {
@@ -507,6 +567,7 @@ class Session(
                 else if (state.value.status != Status.live) subscribe()
             }
             "subscribed" -> {
+                clearScroll()
                 require(canonical(p.string("paneID")) == state.value.pane?.id)
                 lease = canonical(p.string("subscriptionID"))
                 runID = canonical(p.string("hostRunID"))
@@ -541,7 +602,15 @@ class Session(
             }
             "failure" -> {
                 val error = p.string("error")
-                if (
+                if (error.startsWith("SCROLL_UNAVAILABLE") || error.startsWith("SCROLL_BUSY")) {
+                    val request = scrollRequest
+                    if (request != null &&
+                        p.optionalString("subscriptionID")?.let(::canonical) == request.lease &&
+                        p.optionalString("requestID")?.let(::canonical) == request.id) {
+                        clearScroll()
+                        state.update { it.copy(error = error) }
+                    }
+                } else if (
                     error.startsWith("HISTORY_UNAVAILABLE") &&
                         state.value.loadingHistory &&
                         p.optionalString("subscriptionID")?.let(::canonical) == lease
@@ -554,6 +623,7 @@ class Session(
                     failed(error)
                 }
             }
+            "scrollResult" -> scrollResult(p)
             "historyPage" -> {
                 require(
                     canonical(p.string("subscriptionID")) == lease && state.value.loadingHistory

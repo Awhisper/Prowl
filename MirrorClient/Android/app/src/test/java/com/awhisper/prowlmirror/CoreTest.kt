@@ -63,6 +63,39 @@ class CoreTest {
     }
 
     @Test
+    fun scrollControlsUseSwiftEnvelopeAndStrictSequenceNumbers() {
+        val requestID = "00010203-0405-0607-0809-0A0B0C0D0E0F"
+        val lease = "11111111-2222-3333-4444-555555555555"
+        val encoded = Wire.encode(control("scroll", obj(
+            "requestID" to requestID, "direction" to "up", "subscriptionID" to lease,
+        )))
+        assertEquals(
+            "{\"scroll\":{\"_0\":{\"requestID\":\"$requestID\",\"direction\":\"up\",\"subscriptionID\":\"$lease\"}}}",
+            String(encoded.drop(5).toByteArray()),
+        )
+        val result = Wire.read(ByteArrayInputStream(Wire.encode(control("scrollResult", obj(
+            "requestID" to requestID, "sequence" to Long.MAX_VALUE, "subscriptionID" to lease,
+        ))))) as Packet.Control
+        assertEquals("scrollResult", result.kind)
+        assertEquals(Long.MAX_VALUE, result.payload().longInteger("sequence"))
+        for (invalid in listOf("1", 1.5, java.math.BigInteger("9223372036854775808"))) {
+            assertThrows(Exception::class.java) { obj("sequence" to invalid).longInteger("sequence") }
+        }
+    }
+
+    @Test
+    fun onlyOutwardVerticalPullsAtTheStartingEdgeRequestRemoteScrolling() {
+        assertEquals(ScrollDirection.UP, remoteScrollDirection(5f, 70f, true, false, 56f))
+        assertEquals(ScrollDirection.DOWN, remoteScrollDirection(5f, -70f, false, true, 56f))
+        assertNull(remoteScrollDirection(5f, 30f, true, true, 56f))
+        assertNull(remoteScrollDirection(80f, 70f, true, true, 56f))
+        assertNull(remoteScrollDirection(0f, 70f, false, true, 56f))
+        assertNull(remoteScrollDirection(0f, -70f, true, false, 56f))
+        assertNull(remoteScrollDirection(0f, 100f, false, false, 56f))
+        assertNull(remoteScrollDirection(Float.NaN, 70f, true, true, 56f))
+    }
+
+    @Test
     fun pairingAndProofBinding() {
         assertEquals("ABCD2345", Authentication.code("abcd-2345"))
         assertThrows(Exception::class.java) { Authentication.code("0OIL1111") }

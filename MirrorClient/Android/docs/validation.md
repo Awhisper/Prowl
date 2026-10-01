@@ -39,6 +39,28 @@ Ghostty, existing remote debug apps, or any physical device.
   selection cancellation, session-specific dialogs, session-owned launch state,
   and Unicode-safe detail chunking.
 
+## Remote scrolling validation (2026-10-01)
+
+- Debug APK, instrumentation APK and lint succeeded with JDK 17 / Android SDK 34.
+- 37 JVM tests ran: 36 passed; the optional native TLS fixture was not running,
+  so its one test was skipped. Remote scroll tests cover capability negotiation,
+  single in-flight requests, unchanged frames, request/lease/sequence validation,
+  five-second timeout, late responses, recoverable errors, disconnect without replay,
+  and preserving History access.
+- All 12 instrumented UI tests passed on the Android 16 phone emulator, including
+  seven remote scrolling cases. They exercise buttons/loading, unchanged output,
+  top/bottom pulls, local text scrolling, reading anchors, long-press selection,
+  unavailable responses, History and older Hosts. A held selection drag initially
+  reproduced an unwanted remote request; it now passes without sending input.
+- UI tests use a fake Host transport inside the actual application UI. They do not
+  send input to any real pane or validate end-to-end scrolling over TLS.
+- The emulator ran read-only with snapshot loading/saving disabled. No physical
+  phone, saved Host credential or existing pane was used.
+- Logs: `/tmp/prowl-android-scroll-final-build.log` and
+  `/tmp/prowl-android-scroll-ui-final-direct.log`. Loading, completed, long-text,
+  History and error screenshots were inspected under
+  `/tmp/prowl-android-scroll-screenshots/`.
+
 ## Not represented as passed
 
 - Physical phone/tablet, vendor-specific IME, actual Bluetooth/USB keyboard.

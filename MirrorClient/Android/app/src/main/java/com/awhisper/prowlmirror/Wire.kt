@@ -36,6 +36,9 @@ fun JsonObject.optionalString(key: String): String? =
 fun JsonObject.integer(key: String): Int =
     stringNumber(key).toIntOrNull() ?: throw IOException("Invalid $key")
 
+fun JsonObject.longInteger(key: String): Long =
+    stringNumber(key).toLongOrNull() ?: throw IOException("Invalid $key")
+
 private fun JsonObject.stringNumber(key: String): String =
     get(key)?.takeIf { it.isJsonPrimitive && it.asJsonPrimitive.isNumber }?.asString
         ?: throw IOException("Invalid $key")
@@ -98,6 +101,8 @@ object Wire {
             "acknowledge",
             "input",
             "refresh",
+            "scroll",
+            "scrollResult",
             "history",
             "historyPage",
             "command",

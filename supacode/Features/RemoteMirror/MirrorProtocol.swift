@@ -14,6 +14,7 @@ nonisolated struct MirrorFrame: Codable, Equatable, Sendable {
   let columns: UInt32
   let rows: UInt32
   let bytes: Data
+  var viewportText: String?
 }
 
 nonisolated enum MirrorMessage: Codable, Sendable {
@@ -23,6 +24,10 @@ nonisolated enum MirrorMessage: Codable, Sendable {
   }
   enum Intent: String, Codable, Sendable {
     case takeover, ifFree
+  }
+  enum ScrollDirection: String, Codable, Sendable {
+    case upward = "up"
+    case downward = "down"
   }
   enum EndReason: String, Codable, Sendable {
     case takenOver, hostStopped, paneClosed
@@ -46,8 +51,8 @@ nonisolated enum MirrorMessage: Codable, Sendable {
   }
   enum Kind: String, Codable {
     case challenge, authenticate, pair, paired, authenticated, list, panes, subscribe, subscribed,
-      frame, textFrame, acknowledge, input, history, historyPage, failure, ping, pong, ended,
-      refresh, command, commandResult, commandReceipt
+      frame, textFrame, viewport, acknowledge, input, history, historyPage, failure, ping, pong, ended,
+      refresh, scroll, scrollResult, command, commandResult, commandReceipt
   }
   case list
   case panes(PanesPayload)
@@ -61,6 +66,7 @@ nonisolated enum MirrorMessage: Codable, Sendable {
     var paneID: UUID
     var representation: Representation
     var intent: Intent
+    var includeViewportText: Bool?
   }
   case subscribed(SubscribedPayload)
   struct SubscribedPayload: Codable, Sendable {
@@ -83,6 +89,12 @@ nonisolated enum MirrorMessage: Codable, Sendable {
     var text: String
     var subscriptionID: UUID
   }
+  case viewport(ViewportPayload)
+  struct ViewportPayload: Codable, Sendable {
+    var text: String?
+    var sequence: UInt64
+    var subscriptionID: UUID
+  }
   case acknowledge(AcknowledgePayload)
   struct AcknowledgePayload: Codable, Sendable {
     var sequence: UInt64
@@ -91,6 +103,18 @@ nonisolated enum MirrorMessage: Codable, Sendable {
   case input(InputPayload)
   struct InputPayload: Codable, Sendable {
     var bytes: Data
+    var subscriptionID: UUID
+  }
+  case scroll(ScrollPayload)
+  struct ScrollPayload: Codable, Sendable {
+    var requestID: UUID
+    var direction: ScrollDirection
+    var subscriptionID: UUID
+  }
+  case scrollResult(ScrollResultPayload)
+  struct ScrollResultPayload: Codable, Sendable {
+    var requestID: UUID
+    var sequence: UInt64
     var subscriptionID: UUID
   }
   case history(HistoryPayload)
@@ -113,6 +137,7 @@ nonisolated enum MirrorMessage: Codable, Sendable {
   struct FailurePayload: Codable, Sendable {
     var error: String
     var subscriptionID: UUID?
+    var requestID: UUID?
   }
   case ping
   case pong
@@ -151,8 +176,11 @@ nonisolated enum MirrorMessage: Codable, Sendable {
     case .subscribed: .subscribed
     case .frame: .frame
     case .textFrame: .textFrame
+    case .viewport: .viewport
     case .acknowledge: .acknowledge
     case .input: .input
+    case .scroll: .scroll
+    case .scrollResult: .scrollResult
     case .history: .history
     case .historyPage: .historyPage
     case .failure: .failure
@@ -208,8 +236,11 @@ nonisolated enum MirrorMessage: Codable, Sendable {
     case .subscribed(let payload): payload.subscriptionID
     case .frame(let payload): payload.subscriptionID
     case .textFrame(let payload): payload.subscriptionID
+    case .viewport(let payload): payload.subscriptionID
     case .acknowledge(let payload): payload.subscriptionID
     case .input(let payload): payload.subscriptionID
+    case .scroll(let payload): payload.subscriptionID
+    case .scrollResult(let payload): payload.subscriptionID
     case .history(let payload): payload.subscriptionID
     case .historyPage(let payload): payload.subscriptionID
     case .failure(let payload): payload.subscriptionID
@@ -229,7 +260,9 @@ nonisolated enum MirrorMessage: Codable, Sendable {
     switch self {
     case .frame(let payload): payload.sequence
     case .textFrame(let payload): payload.sequence
+    case .viewport(let payload): payload.sequence
     case .acknowledge(let payload): payload.sequence
+    case .scrollResult(let payload): payload.sequence
     default: nil
     }
   }
@@ -239,9 +272,35 @@ nonisolated enum MirrorMessage: Codable, Sendable {
     default: nil
     }
   }
+  var viewportText: String? {
+    switch self {
+    case .viewport(let payload): payload.text
+    default: nil
+    }
+  }
+  var includeViewportText: Bool? {
+    switch self {
+    case .subscribe(let payload): payload.includeViewportText
+    default: nil
+    }
+  }
   var bytes: Data? {
     switch self {
     case .input(let payload): payload.bytes
+    default: nil
+    }
+  }
+  var scrollDirection: ScrollDirection? {
+    switch self {
+    case .scroll(let payload): payload.direction
+    default: nil
+    }
+  }
+  var scrollRequestID: UUID? {
+    switch self {
+    case .scroll(let payload): payload.requestID
+    case .scrollResult(let payload): payload.requestID
+    case .failure(let payload): payload.requestID
     default: nil
     }
   }

@@ -22,6 +22,10 @@ final class MirrorClient: Identifiable {
   private(set) var supportsProfileLaunch = false
   private(set) var supportsShellLaunch = false
   private(set) var supportsHistory = true
+  private(set) var supportsRemoteScroll = false
+  private(set) var supportsViewportText = false
+  private(set) var viewportState = MirrorViewportState()
+  let scrollState = MirrorScrollState()
   private(set) var historyTruncated = false
   private(set) var isSubscribed = false
   var onVerifiedConnection: (() -> Void)?
@@ -76,6 +80,10 @@ final class MirrorClient: Identifiable {
     failure = nil
     endReason = nil
     subscriptionID = nil
+    scrollState.reset()
+    supportsRemoteScroll = false
+    supportsViewportText = false
+    viewportState = MirrorViewportState()
     isSubscribed = false
     isConnecting = true
     let peer = makeConnection(configuration)
@@ -105,6 +113,7 @@ final class MirrorClient: Identifiable {
       self.isConnected = false
       self.isConnecting = false
       self.isLoadingHistory = false
+      self.scrollState.cancel()
       self.isSubscribed = false
       self.subscriptionID = nil
       self.failure = peer.failure
@@ -137,12 +146,24 @@ final class MirrorClient: Identifiable {
           message.kind == .input || message.kind == .acknowledge,
           message.subscriptionID == self.subscriptionID
         else { return }
+        if message.kind == .acknowledge, let sequence = message.sequence {
+          if self.supportsViewportText {
+            do { try self.viewportState.didPresent(sequence: sequence) } catch {
+              self.peer?.close(String(localized: "Invalid Host viewport frame."))
+              return
+            }
+          }
+          self.scrollState.didPresent(sequence: sequence)
+        }
         self.peer?.send(message)
       }
       replica.onFailure = { [weak self] reason in self?.peer?.close(reason) }
       try replica.start()
       peer?.send(
-        .subscribe(.init(paneID: pane.id, representation: .terminal, intent: resumeIntent))
+        .subscribe(
+          .init(
+            paneID: pane.id, representation: .terminal, intent: resumeIntent,
+            includeViewportText: supportsViewportText ? true : nil))
       )
     } catch { peer?.close(error.localizedDescription) }
   }
@@ -156,6 +177,8 @@ final class MirrorClient: Identifiable {
     isConnected = false
     isConnecting = false
     isLoadingHistory = false
+    scrollState.reset()
+    viewportState = MirrorViewportState()
     isSubscribed = false
     subscriptionID = nil
     historyLines = []
@@ -172,11 +195,21 @@ final class MirrorClient: Identifiable {
     }
     isLoadingHistory = true
     showsHistory = true
+    scrollState.cancel()
     peer?.send(
       .history(
         .init(
           historyID: historyID, offset: historyID == nil ? nil : historyOffset,
           subscriptionID: subscriptionID)))
+  }
+
+  var canScroll: Bool {
+    isSubscribed && supportsRemoteScroll && !showsHistory && !scrollState.isLoading
+  }
+
+  func scroll(_ direction: MirrorMessage.ScrollDirection) {
+    guard canScroll, let subscriptionID, let requestID = scrollState.begin() else { return }
+    peer?.send(.scroll(.init(requestID: requestID, direction: direction, subscriptionID: subscriptionID)))
   }
 
   private func receive(_ message: MirrorMessage) {
@@ -196,6 +229,8 @@ final class MirrorClient: Identifiable {
         return
       }
       subscriptionID = id
+      scrollState.reset()
+      viewportState = MirrorViewportState()
       historyID = nil
       historyLines = []
       historyOffset = 0
@@ -203,14 +238,9 @@ final class MirrorClient: Identifiable {
     case .ended:
       receiveEnd(message)
     case .frame:
-      guard selectedPane != nil,
-        subscriptionID != nil && message.subscriptionID == subscriptionID
-      else {
-        peer?.close(String(localized: "Unexpected Host frame."))
-        return
-      }
-      isSubscribed = true
-      replica.display(message)
+      receiveFrame(message)
+    case .viewport:
+      receiveViewport(message)
     case .historyPage:
       if historyID == nil { historyPageGate = MirrorHistoryPageGate() }
       guard isLoadingHistory, message.subscriptionID == subscriptionID,
@@ -227,18 +257,70 @@ final class MirrorClient: Identifiable {
       historyOffset = offset
       historyLines.insert(contentsOf: lines, at: 0)
       isLoadingHistory = false
+    case .scrollResult:
+      receiveScrollResult(message)
     case .failure:
-      if message.error?.hasPrefix("HISTORY_UNAVAILABLE") == true,
-        message.subscriptionID == subscriptionID
-      {
-        isLoadingHistory = false
-        error = message.error
-        return
-      }
-      if message.error?.hasPrefix("PANE_BUSY") == true { endReason = .takenOver }
-      peer?.close(message.error ?? String(localized: "Host rejected the request."))
+      receiveFailure(message)
     default: peer?.close(String(localized: "Unexpected Host message."))
     }
+  }
+
+  private func receiveFrame(_ message: MirrorMessage) {
+    guard selectedPane != nil, subscriptionID != nil && message.subscriptionID == subscriptionID else {
+      peer?.close(String(localized: "Unexpected Host frame."))
+      return
+    }
+    if supportsViewportText {
+      do {
+        guard let sequence = message.sequence else { throw MirrorProtocolError.invalidMessage }
+        try viewportState.receiveFrame(sequence: sequence)
+      } catch {
+        peer?.close(String(localized: "Invalid Host viewport frame."))
+        return
+      }
+    }
+    isSubscribed = true
+    replica.display(message)
+  }
+
+  private func receiveViewport(_ message: MirrorMessage) {
+    guard supportsViewportText, subscriptionID != nil, message.subscriptionID == subscriptionID,
+      case .viewport(let payload) = message
+    else {
+      peer?.close(String(localized: "Unexpected Host viewport."))
+      return
+    }
+    do { try viewportState.stage(payload) } catch {
+      peer?.close(String(localized: "Invalid Host viewport frame."))
+    }
+  }
+
+  private func receiveScrollResult(_ message: MirrorMessage) {
+    guard message.subscriptionID == subscriptionID,
+      let requestID = message.scrollRequestID, let sequence = message.sequence
+    else {
+      peer?.close(String(localized: "Invalid scroll result."))
+      return
+    }
+    scrollState.receiveResult(requestID: requestID, sequence: sequence)
+  }
+
+  private func receiveFailure(_ message: MirrorMessage) {
+    if message.error?.hasPrefix("SCROLL_") == true, message.subscriptionID == subscriptionID {
+      if let requestID = message.scrollRequestID, requestID == scrollState.requestID {
+        scrollState.fail(message.error ?? String(localized: "Host could not scroll."))
+      }
+      return
+    }
+    if message.error?.hasPrefix("HISTORY_UNAVAILABLE") == true,
+      message.subscriptionID == subscriptionID
+    {
+      isLoadingHistory = false
+      error = message.error
+      return
+    }
+    if message.error?.hasPrefix("PANE_BUSY") == true { endReason = .takenOver }
+    peer?.close(message.error ?? String(localized: "Host rejected the request."))
   }
 
   private func receiveEnd(_ message: MirrorMessage) {
@@ -263,6 +345,8 @@ final class MirrorClient: Identifiable {
     supportsProfileLaunch = message.capabilities?.contains("launch-profile") == true
     supportsShellLaunch = message.capabilities?.contains("launch-shell") == true
     supportsHistory = message.capabilities?.contains("history") == true
+    supportsRemoteScroll = message.capabilities?.contains("remote-scroll") == true
+    supportsViewportText = message.capabilities?.contains("viewport-text-v1") == true
     supportsTakeover = message.capabilities?.contains("takeover") == true
     isConnecting = false
     onVerifiedConnection?()
