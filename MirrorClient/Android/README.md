@@ -93,4 +93,7 @@ Delivery confirmation and reconnect receipt lookup remain separate from task suc
 
 Use **Scan QR Code** in the Host connection form to scan **Add a Device** on Host.
 Scanning connects with the encoded address, port and short-lived code. Camera
-permission is optional; manual entry remains available. Refresh expired codes on Host.
+permission is optional; manual entry remains available. The scanner opens in portrait
+without a red scanning line. Refresh expired codes on Host.
+The Live scroll toolbar places Scroll up on the left and Scroll down on the right,
+with loading feedback centered between them.

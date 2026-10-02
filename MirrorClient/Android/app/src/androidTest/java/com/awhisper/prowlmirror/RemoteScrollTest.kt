@@ -111,12 +111,18 @@ class RemoteScrollTest {
         val outputBounds = rule.onNodeWithTag("mirror-output").fetchSemanticsNode().boundsInRoot
         val upBounds = rule.onNodeWithText("Scroll up").fetchSemanticsNode().boundsInRoot
         val followBounds = rule.onNodeWithText("Follow latest").fetchSemanticsNode().boundsInRoot
+        val downBounds = rule.onNodeWithText("Scroll down").fetchSemanticsNode().boundsInRoot
+        assertTrue(upBounds.left <= outputBounds.left + outputBounds.width * 0.2f)
+        assertTrue(downBounds.right >= outputBounds.right - outputBounds.width * 0.2f)
+        assertTrue(downBounds.left - upBounds.right > outputBounds.width * 0.4f)
         assertTrue(upBounds.bottom <= outputBounds.top)
         assertTrue(followBounds.top >= outputBounds.bottom)
         rule.onNodeWithText("Scroll up").assertIsEnabled().performClick()
         rule.onNodeWithText("Scroll up").assertIsNotEnabled()
         rule.onNodeWithText("Scroll down").assertIsNotEnabled()
         rule.onNodeWithText("Loading…").assertIsDisplayed()
+        assertEquals(upBounds, rule.onNodeWithText("Scroll up").fetchSemanticsNode().boundsInRoot)
+        assertEquals(downBounds, rule.onNodeWithText("Scroll down").fetchSemanticsNode().boundsInRoot)
         screenshot("loading")
         rule.runOnIdle {
             assertEquals(1, sent.count { it.kind == "scroll" })

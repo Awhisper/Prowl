@@ -420,19 +420,23 @@ private fun Reading(session: Session, state: SessionState) {
                         Text("History truncated", style = MaterialTheme.typography.labelSmall)
                 }
             else if ("remote-scroll" in state.capabilities)
-                Row(verticalAlignment = Alignment.CenterVertically) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     TextButton(
                         onClick = { session.scrollRemote(ScrollDirection.UP) },
                         enabled = state.canScrollRemote(ScrollDirection.UP),
                     ) { Text("Scroll up") }
+                    Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                        if (state.scrolling != null) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                                Text("Loading…", modifier = Modifier.padding(start = 8.dp))
+                            }
+                        }
+                    }
                     TextButton(
                         onClick = { session.scrollRemote(ScrollDirection.DOWN) },
                         enabled = state.canScrollRemote(ScrollDirection.DOWN),
                     ) { Text("Scroll down") }
-                    if (state.scrolling != null) {
-                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                        Text("Loading…", modifier = Modifier.padding(start = 8.dp))
-                    }
                 }
             LazyColumn(
                 Modifier.weight(1f).fillMaxWidth().testTag("mirror-output"),

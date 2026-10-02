@@ -24,6 +24,7 @@ internal fun PairingScanButton(connect: (Host, String) -> Unit, failed: (String)
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) {
             scanner.launch(ScanOptions().apply {
+                setCaptureActivity(PairingCaptureActivity::class.java)
                 setDesiredBarcodeFormats(ScanOptions.QR_CODE)
                 setPrompt("Scan the QR code in Prowl Host → Add a Device")
                 setBeepEnabled(false)

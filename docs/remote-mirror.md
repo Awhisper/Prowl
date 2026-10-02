@@ -250,6 +250,9 @@ to that address; scanning does not create a tunnel.
 The QR expires with the existing 60-second, single-use code. Refresh Code on Host
 and scan again if it expires. Camera permission is requested only when scanning;
 manual entry remains available if permission is denied or scanning is unsupported.
+On Android, the scanner opens in portrait without a red scanning line. The Live
+scroll toolbar places **Scroll up** and **Scroll down** at opposite ends, with
+loading feedback between them.
 
 ### Native history appearance on Mac
 
