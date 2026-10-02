@@ -70,7 +70,9 @@ other devices remain connected. **Revoke All Devices…** asks for confirmation,
 removes every device's saved authorization, including offline devices, disconnects
 all clients, and invalidates the current pairing code. Host keeps listening and
 local terminals keep running. Saved client connections cannot reconnect until each
-device pairs again with a fresh code. Device records are limited to 64. If enrollment
+device pairs again with a fresh code. In the Mac connection form, **Pair Again…**
+shows the code field and bypasses saved access even if the connection error was
+reported as a network failure. Device records are limited to 64. If enrollment
 succeeds on Host but its response or the client's save is lost, open a new window
 and remove the unused device record. Unreadable saved entries are omitted from the Host list without deleting them.
 Errors that prevent pairing or connection remain visible in plain language, naming

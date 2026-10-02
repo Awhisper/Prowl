@@ -24,7 +24,7 @@ struct AddRemoteMirrorView: View {
     return mirrors.knownHosts.host(address: endpoint.address, port: endpoint.port)
   }
 
-  /// A saved credential is used silently; the code field appears only when one is missing or rejected.
+  /// Saved access is the default, but users can explicitly replace it after Host revocation.
   private var needsPairingCode: Bool { requiresNewCode || knownHost == nil }
 
   var body: some View {
@@ -163,9 +163,22 @@ struct AddRemoteMirrorView: View {
         }
         .frame(maxWidth: .infinity)
       } else if let knownHost {
-        Label("Already paired with \(knownHost.displayName). No code is needed.", systemImage: "checkmark.seal")
-          .font(.caption).foregroundStyle(.secondary)
-          .fixedSize(horizontal: false, vertical: true)
+        HStack {
+          Label("Already paired with \(knownHost.displayName). No code is needed.", systemImage: "checkmark.seal")
+            .font(.caption).foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+          Spacer()
+          Button("Pair Again…") {
+            client?.close()
+            client = nil
+            error = nil
+            pairingCode = ""
+            requiresNewCode = true
+            codeFocused = true
+          }
+          .help("Enter a fresh code from Host instead of using saved device access")
+          .accessibilityIdentifier("remote-mirror-pair-again")
+        }
       }
       if let message = client?.error ?? error {
         Text(message).foregroundStyle(.red).textSelection(.enabled)

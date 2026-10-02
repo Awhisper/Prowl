@@ -27,9 +27,11 @@ struct MirrorDevicePairingTests {
     #expect(host.pairingKey.isEmpty)
     host.addDevice()
     try await listening(host)
-    let first = Client(port: UInt16(host.port)!, code: host.pairingKey) {
-      #expect(host.isRunning && !host.isStarting)
-    }
+    let first = Client(
+      port: UInt16(host.port)!, code: host.pairingKey,
+      onPersist: {
+        #expect(host.isRunning && !host.isStarting)
+      })
     defer { first.peer.close() }
     try await first.start(stage: "first pairing")
     #expect(host.devices.count == 1)
@@ -44,9 +46,11 @@ struct MirrorDevicePairingTests {
     #expect(host.mirroredPanes(for: firstCredential.deviceID).map(\.id) == [source.id])
     host.addDevice()
     try await listening(host)
-    let second = Client(port: UInt16(host.port)!, code: host.pairingKey) {
-      #expect(host.isRunning && !host.isStarting)
-    }
+    let second = Client(
+      port: UInt16(host.port)!, code: host.pairingKey,
+      onPersist: {
+        #expect(host.isRunning && !host.isStarting)
+      })
     defer { second.peer.close() }
     try await second.start(stage: "second pairing")
     #expect(host.devices.count == 2)
@@ -173,9 +177,17 @@ struct MirrorDevicePairingTests {
     }
     host.addDevice()
     try await listening(host)
-    let fresh = Client(port: UInt16(host.port)!, code: host.pairingKey)
+    var restoredOldAccess = false
+    let fresh = Client(
+      port: UInt16(host.port)!, code: host.pairingKey,
+      restore: { configuration in
+        restoredOldAccess = true
+        return .init(
+          address: configuration.address, port: configuration.port, pairingKey: "", credential: credentials[0])
+      })
     clients.append(fresh)
     try await fresh.start(stage: "fresh pairing after revoke all")
+    #expect(!restoredOldAccess)
     #expect(host.devices.count == 1)
   }
 
@@ -464,6 +476,7 @@ struct MirrorDevicePairingTests {
     let messages: AsyncStream<MirrorMessage>
     init(
       port: UInt16, code: String = "", credential: MirrorDeviceCredential? = nil,
+      restore: @escaping (MirrorSavedConnection) throws -> MirrorSavedConnection? = { _ in nil },
       onPersist: @escaping () -> Void = {}
     ) {
       let events = AsyncStream.makeStream(of: MirrorMessage.self)
@@ -471,7 +484,7 @@ struct MirrorDevicePairingTests {
       peer = MirrorRemoteConnection(
         configuration: .init(
           address: "127.0.0.1", port: port, pairingKey: code, credential: credential),
-        restore: { _ in nil },
+        restore: restore,
         persist: { [weak self] in
           self?.saved = $0
           onPersist()
