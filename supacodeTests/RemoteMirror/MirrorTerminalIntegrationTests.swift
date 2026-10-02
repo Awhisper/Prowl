@@ -50,6 +50,8 @@ struct MirrorTerminalIntegrationTests {
     #expect(overlay.isHidden)
     hosting.layoutSubtreeIfNeeded()
     let viewportHeight = try #require(overlay.enclosingScrollView).frame.height
+    fixture.manager.activeWorktreeStates.first { $0.surfaces[fixture.hostView.id] != nil }?
+      .surfaceAgentStates[fixture.hostView.id] = PaneAgentState(detectedAgent: .codex)
     let initialText = try fixture.source.textSnapshot(fixture.hostView.id).text
     let pageRows = max(1, Int(ghostty_surface_size(try #require(fixture.hostView.surface)).rows) - 3)
     func firstHistoryRow(_ text: String) throws -> Int {
@@ -147,6 +149,22 @@ struct MirrorTerminalIntegrationTests {
     try await fixture.waitForMirror(client, containing: "TUI-DOWN")
     try await fixture.wait("TUI down completed") { !client.scrollState.isLoading }
     #expect(client.scrollState.error == nil)
+  }
+
+  @Test(.timeLimit(.minutes(1))) func codexWheelProfileLimitsRealTUIEventCount() async throws {
+    let fixture = try Fixture()
+    defer { fixture.close() }
+    try await fixture.wait("Host ready") { fixture.hostText.contains("READY") }
+    try fixture.send("count-scroll")
+    try await fixture.wait("Counter ready") { fixture.hostText.contains("COUNT:0") }
+    fixture.manager.activeWorktreeStates.first { $0.surfaces[fixture.hostView.id] != nil }?
+      .surfaceAgentStates[fixture.hostView.id] = PaneAgentState(detectedAgent: .codex)
+    let rows = Int(ghostty_surface_size(try #require(fixture.hostView.surface)).rows)
+    let events = GhosttyMirrorPaneSource.wheelEvents(paneRows: rows, agent: .codex)
+    try fixture.source.scroll(.upward, to: fixture.hostView.id)
+    try await fixture.wait("Converted TUI events consumed") { fixture.hostText.contains("COUNT:\(events)!") }
+    try fixture.source.scroll(.downward, to: fixture.hostView.id)
+    try await fixture.wait("Reverse TUI events consumed") { fixture.hostText.contains("COUNT:0!") }
   }
 
   @Test(.timeLimit(.minutes(1))) func textWireScrollsRealViewportAndKeepsHistorySnapshot() async throws {
@@ -601,7 +619,16 @@ struct MirrorTerminalIntegrationTests {
     try await fixture.wait("mirror viewport scroll") { viewport.contentView.bounds.minY > initialTop + 1 }
     #expect(try fixture.frame(replica) == original)
     #expect(try fixture.sourceFrame() == original)
+    let completion = UUID()
+    viewport.updateScrollCompletion(completion)
+    viewport.layoutSubtreeIfNeeded()
+    #expect(viewport.contentView.bounds.minY == 0)
+    replica.scrollWheel(with: try #require(NSEvent(cgEvent: event)))
+    try await fixture.wait("Reading continues after completion") { viewport.contentView.bounds.minY > 1 }
     let manualOffset = viewport.contentView.bounds.origin
+    viewport.updateScrollCompletion(completion)
+    viewport.layoutSubtreeIfNeeded()
+    #expect(viewport.contentView.bounds.origin == manualOffset)
     window.setContentSize(NSSize(width: 280, height: 200))
     viewport.layoutSubtreeIfNeeded()
     #expect(abs(viewport.contentView.bounds.minY - manualOffset.y) < 1)
@@ -963,6 +990,18 @@ struct MirrorTerminalIntegrationTests {
               printf 'W%03d' "$n"
               printf '%*s' "$((columns-5))" ''
               printf '界🙂X\n'
+            done
+            ;;
+          count-scroll)
+            stty raw -echo
+            printf '\033[?1049h\033[?1007h\033[2J\033[HCOUNT:0!'
+            count=0
+            while IFS= read -r -n 3 key; do
+              case "$key" in
+                $'\033[A') count=$((count+1));;
+                $'\033[B') count=$((count-1));;
+              esac
+              printf '\033[2J\033[HCOUNT:%s!' "$count"
             done
             ;;
           scroll-tui)

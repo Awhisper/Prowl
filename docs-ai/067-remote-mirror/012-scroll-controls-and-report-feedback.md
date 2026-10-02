@@ -75,3 +75,31 @@ input, text clients, and retained-history preservation. Debug build succeeds
 with no warnings; changed-file SwiftLint and formatting pass. Full `make check`
 still stops on the five pre-existing RepositoryIconImage aspect-ratio violations.
 The current iOS Debug was installed successfully on the connected iPhone 16.
+
+## Agent wheel units and reading origin (2026-10-02)
+
+Remote acceptance reproduced a 51-row pane producing 48 wheel events, while
+Codex 0.159.2 moves three transcript rows per event. The old TUI test confirmed
+only direction, so it did not catch the resulting threefold overshoot.
+
+An internal constant table now assigns Codex three rows per event and eight
+reserved composer/status rows. Together with the existing three-row overlap,
+a 51-row pane sends 13 events, approximately 39 transcript rows. Unknown Agents
+use one row per event and no reserved rows. This is not a user-facing setting.
+Proven Ghostty native scrollback bypasses Agent profiles, including when Codex
+is detected. All paths clamp to at least one row/event for tiny panes.
+
+Both mobile clients now anchor both completed directions at the top. Mac exposes
+a correlated completion identity only after the reply and displayed frame match;
+the viewport resets once for each completion, including Original Size mode.
+Ordinary subsequent frames and duplicate results preserve local reading offsets.
+
+Verification: 23 Mac tests pass, including real TUI event counts in both
+directions, exact native scrolling with a detected Codex Agent, correlated
+completion and Original Size local-offset preservation. Two iPhone UI tests and
+one iPad UI test pass; both directions reveal the first row of long content.
+Android JVM tests and lint pass, and all eight remote-scroll UI tests pass when
+run directly after an initial emulator instrumentation startup crash (zero tests
+executed in the failed launch). Mac Debug and signed iPhoneOS builds succeed.
+Full repository checks still stop at the five existing RepositoryIconImage lint
+violations; changed Mac files pass SwiftLint and formatting.

@@ -2,7 +2,6 @@ package com.awhisper.prowlmirror
 
 import android.view.KeyEvent as AndroidKeyEvent
 import androidx.compose.foundation.*
-import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -404,14 +403,7 @@ private fun Reading(session: Session, state: SessionState) {
         LaunchedEffect(state.scrollCompletion) {
             val completion = state.scrollCompletion
             if (!state.showsHistory && completion != null && blocks.isNotEmpty()) {
-                if (completion.direction == ScrollDirection.DOWN) {
-                    scroll.scrollToItem(blocks.lastIndex)
-                    val layout = scroll.layoutInfo
-                    layout.visibleItemsInfo.lastOrNull { it.index == blocks.lastIndex }?.let {
-                        val remaining = it.offset + it.size + layout.afterContentPadding - layout.viewportEndOffset
-                        scroll.scrollBy(remaining.coerceAtLeast(0).toFloat())
-                    }
-                } else scroll.scrollToItem(0)
+                scroll.scrollToItem(0)
             }
         }
         Column(Modifier.fillMaxSize()) {

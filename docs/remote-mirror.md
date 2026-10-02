@@ -107,10 +107,16 @@ renders replacement text with local reflow. Cleared output is not an archive.
 On a Host advertising remote scrolling, **Scroll Up** and **Scroll Down** move
 the live Host terminal by its current pane height minus three rows (at least one
 row). Native scrollback moves by that exact number of rows. Application-owned
-scrolling receives the equivalent precision wheel distance; Host precision-scroll
-settings and the application can change the resulting distance. These buttons sit above the live
+scrolling receives the equivalent precision wheel distance. Internal Agent defaults account for known application
+wheel steps: Codex uses three rows per event and reserves eight pane rows for its
+composer/status area, in addition to the three-row overlap. Unlisted Agents use
+one row per event with no extra reservation. These are compiled constants, not
+user settings, and never affect native Ghostty scrollback. Host precision-scroll
+settings and application behavior can still affect TUI distance. These buttons sit above the live
 view on all clients. Wheel and touch gestures only move the local readable view;
-they never request remote scrolling. Follow latest remains below the mobile reader.
+they never request remote scrolling. Each completed remote scroll resets the local
+reader to the top in both directions, including Mac Original Size mode. Follow
+latest remains below the mobile reader.
 
 A current Host sends frame-matched boundary state. **Scroll Up** is disabled at
 a known top and **Scroll Down** at a known bottom. Native terminal scrollback can

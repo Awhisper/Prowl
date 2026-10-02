@@ -6,6 +6,14 @@ import Testing
 
 @MainActor
 struct MirrorScrollStateTests {
+  @Test func agentWheelProfilesReserveChromeAndDoNotChangeUnknownAgents() {
+    #expect(GhosttyMirrorPaneSource.wheelEvents(paneRows: 51, agent: .codex) == 13)
+    #expect(GhosttyMirrorPaneSource.wheelEvents(paneRows: 51, agent: .claude) == 48)
+    #expect(GhosttyMirrorPaneSource.wheelEvents(paneRows: 51, agent: nil) == 48)
+    #expect(GhosttyMirrorPaneSource.wheelEvents(paneRows: 1, agent: .codex) == 1)
+    #expect(GhosttyMirrorPaneSource.wheelEvents(paneRows: 3, agent: nil) == 1)
+  }
+
   @Test func waitsForCorrelatedFramePresentationAndLimitsPendingInput() throws {
     let state = MirrorScrollState()
     state.didPresent(sequence: 4)
@@ -16,9 +24,11 @@ struct MirrorScrollStateTests {
     state.receiveResult(requestID: request, sequence: 6)
     state.didPresent(sequence: 5)
     #expect(state.isLoading)
+    #expect(state.completedRequestID == nil)
     state.didPresent(sequence: 6)
     #expect(!state.isLoading)
     #expect(state.error == nil)
+    #expect(state.completedRequestID == request)
   }
 
   @Test func resultCanArriveAfterItsFrameWasPresented() throws {
@@ -46,6 +56,7 @@ struct MirrorScrollStateTests {
     await clock.advance(by: .seconds(5))
     #expect(!state.isLoading)
     #expect(state.error?.contains("timed out") == true)
+    #expect(state.completedRequestID == nil)
     let next = try #require(state.begin())
     state.receiveResult(requestID: previous, sequence: 1)
     state.didPresent(sequence: 1)

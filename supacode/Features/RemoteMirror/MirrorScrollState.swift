@@ -5,6 +5,7 @@ import Observation
 @Observable
 final class MirrorScrollState {
   private(set) var requestID: UUID?
+  private(set) var completedRequestID: UUID?
   private(set) var error: String?
   var isLoading: Bool { requestID != nil }
   @ObservationIgnored private var presentedSequence: UInt64 = 0
@@ -61,6 +62,7 @@ final class MirrorScrollState {
 
   func reset() {
     cancel()
+    completedRequestID = nil
     presentedSequence = 0
     baseline = 0
     error = nil
@@ -68,6 +70,7 @@ final class MirrorScrollState {
 
   private func finishIfPresented() {
     guard let resultSequence, presentedSequence >= resultSequence else { return }
+    completedRequestID = requestID
     cancel()
   }
 }

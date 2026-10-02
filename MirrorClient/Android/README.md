@@ -40,15 +40,17 @@ is no private AI console or dependency on personal shell wrappers.
   These actions scroll the actual Host pane, including a terminal application's own
   scroll handling. Host targets its pane height minus three rows (at least one row),
   with exact native scrollback movement and equivalent precision wheel input for
-  applications; Host precision-scroll settings and the application can affect the distance. One request runs at
+  applications. Internal Host profiles adjust known Agent wheel steps (Codex: three
+  rows per event, reserving eight composer/status rows). Host precision-scroll
+  settings and the application can affect the distance. One request runs at
   a time with a loading indicator; an unchanged screen also completes normally.
   Requests time out after five seconds and are never replayed after reconnecting.
   Hosts with `scroll-state-v1` can confirm the top/bottom boundary: the matching
   button is disabled until a newer frame permits scrolling again. Unknown bounds,
   including applications that manage their own scrolling, stay enabled; unchanged
   text alone never disables a direction. Older Hosts need no boundary metadata.
-  After scrolling up, reading continues at the newly revealed top edge;
-  scrolling down moves to the bottom edge. Automatic following is paused by remote scrolling.
+  Both directions resume reading at the top of the returned screen. Automatic
+  following is paused by remote scrolling.
 - Saving credentials does not persist terminal output or drafts across process death.
   Rotation retains the current ViewModel; reopening the app offers saved Hosts.
 

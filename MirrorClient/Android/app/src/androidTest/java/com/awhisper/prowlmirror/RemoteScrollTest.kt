@@ -205,10 +205,13 @@ class RemoteScrollTest {
             assertEquals(0, session.liveScrollIndex)
             assertEquals(0, session.liveScrollOffset)
         }
+        output.performTouchInput { swipeUp() }
+        rule.runOnIdle { assertTrue(session.liveScrollIndex > 0 || session.liveScrollOffset > 0) }
         rule.onNodeWithText("Scroll down").performClick()
         complete(text)
         rule.runOnIdle {
-            assertTrue(session.liveScrollIndex > 0 || session.liveScrollOffset > 0)
+            assertEquals(0, session.liveScrollIndex)
+            assertEquals(0, session.liveScrollOffset)
         }
         screenshot("local-reading")
         rule.onNodeWithText("Follow latest").performClick()

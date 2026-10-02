@@ -4,6 +4,17 @@ import GhosttyKit
 
 @MainActor
 final class GhosttyMirrorPaneSource: MirrorPaneSource {
+  // TUI wheel events have no row unit. These internal defaults describe known
+  // handlers; native Ghostty scrollback bypasses them entirely.
+  private static let scrollProfiles: [DetectedAgent: (rowsPerEvent: Int, reservedRows: Int)] = [
+    .codex: (rowsPerEvent: 3, reservedRows: 8)
+  ]
+
+  static func wheelEvents(paneRows: Int, agent: DetectedAgent?) -> Int {
+    let profile = agent.flatMap { scrollProfiles[$0] } ?? (rowsPerEvent: 1, reservedRows: 0)
+    return max(1, (max(1, paneRows) - profile.reservedRows - 3) / profile.rowsPerEvent)
+  }
+
   let manager: WorktreeTerminalManager
 
   init(manager: WorktreeTerminalManager) {
@@ -118,7 +129,10 @@ final class GhosttyMirrorPaneSource: MirrorPaneSource {
     // applications still decide how many rows each resulting mouse event moves.
     ghostty_surface_mouse_pos(terminal, -1, -1, GHOSTTY_MODS_NONE)
     ghostty_surface_mouse_pos(terminal, view.bounds.midX, view.bounds.midY, GHOSTTY_MODS_NONE)
-    let pixels = Double(rows) * Double(size.cell_height_px)
+    let agent = manager.activeWorktreeStates.first { $0.surfaces[id] != nil }?
+      .surfaceAgentStates[id]?.detectedAgent
+    let events = Self.wheelEvents(paneRows: Int(size.rows), agent: agent)
+    let pixels = Double(events) * Double(size.cell_height_px)
     ghostty_surface_mouse_scroll(terminal, 0, direction == .upward ? pixels : -pixels, 1)
   }
 

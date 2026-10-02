@@ -361,8 +361,8 @@ private struct MirrorReadingView: View {
             if session.followsLatest { proxy.scrollTo("latest", anchor: .bottom) }
           }
           .onChange(of: session.completedScroll) { _, completion in
-            guard let completion else { return }
-            position.scrollTo(edge: completion.direction == .upward ? .top : .bottom)
+            guard completion != nil else { return }
+            position.scrollTo(edge: .top)
           }
           .safeAreaInset(edge: .top) {
             VStack(alignment: .leading, spacing: 8) {

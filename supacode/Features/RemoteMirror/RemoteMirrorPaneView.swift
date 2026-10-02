@@ -63,7 +63,7 @@ struct RemoteMirrorPaneView: View {
         if let view = client.replica.view {
           MirrorTerminalViewport(
             surface: view, displaySize: client.replica.displaySize, fitsWindow: fitsWindow,
-            viewportText: client.viewportState.text
+            viewportText: client.viewportState.text, scrollCompletion: client.scrollState.completedRequestID
           )
           .opacity(client.showsHistory ? 0 : 1)
           .allowsHitTesting(!client.showsHistory)

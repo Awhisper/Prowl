@@ -7,16 +7,19 @@ struct MirrorTerminalViewport: NSViewRepresentable {
   let displaySize: CGSize
   var fitsWindow = true
   var viewportText: String?
+  var scrollCompletion: UUID?
 
   func makeNSView(context: Context) -> MirrorTerminalScrollView {
     let view = MirrorTerminalScrollView(surface: surface, displaySize: displaySize, fitsWindow: fitsWindow)
     view.updateViewportText(viewportText)
+    view.updateScrollCompletion(scrollCompletion)
     return view
   }
 
   func updateNSView(_ view: MirrorTerminalScrollView, context: Context) {
     view.update(surface: surface, displaySize: displaySize, fitsWindow: fitsWindow)
     view.updateViewportText(viewportText)
+    view.updateScrollCompletion(scrollCompletion)
   }
 }
 
@@ -57,6 +60,7 @@ final class MirrorTerminalScrollView: NSScrollView {
   private let viewport = ViewportTextView(frame: .zero)
   private var fitsWindow: Bool
   private var resetOrigin = true
+  private var scrollCompletion: UUID?
   private var isLayingOut = false
   var displaySize: CGSize {
     didSet { if displaySize != oldValue { needsLayout = true } }
@@ -118,6 +122,14 @@ final class MirrorTerminalScrollView: NSScrollView {
     if let text, viewport.string != text { viewport.string = text }
     if text == nil, window?.firstResponder === viewport { window?.makeFirstResponder(surface) }
     if wasHidden != viewport.isHidden { resetOrigin = true }
+    needsLayout = true
+  }
+
+  func updateScrollCompletion(_ completion: UUID?) {
+    guard scrollCompletion != completion else { return }
+    scrollCompletion = completion
+    guard completion != nil else { return }
+    resetOrigin = true
     needsLayout = true
   }
 

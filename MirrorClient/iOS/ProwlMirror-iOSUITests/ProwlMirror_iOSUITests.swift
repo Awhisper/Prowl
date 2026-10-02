@@ -86,7 +86,7 @@ final class ProwlMirror_iOSUITests: XCTestCase {
   }
 
   @MainActor
-  func testRemoteScrollRevealsTheNewEdgeWhileInteriorDragStaysLocal() {
+  func testRemoteScrollAlwaysRevealsTheTopWhileInteriorDragStaysLocal() {
     let app = XCUIApplication()
     app.launchArguments = [
       "--mirror-ui-fixture", "--mirror-ui-scroll-fixture", "--mirror-ui-scroll-long-fixture",
@@ -108,7 +108,7 @@ final class ProwlMirror_iOSUITests: XCTestCase {
     let sameScreen = app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Remote -1 marker "))
     XCTAssertTrue(sameScreen.allElementsBoundByIndex.contains { $0.isHittable })
     app.buttons["mirror-scroll-down"].tap()
-    let later = app.staticTexts["Remote 0 marker 40"]
+    let later = app.staticTexts["Remote 0 marker 1"]
     expectation(
       for: NSPredicate { _, _ in
         later.exists && later.isHittable && later.frame.minY >= reading.frame.minY

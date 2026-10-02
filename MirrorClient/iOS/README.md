@@ -51,7 +51,9 @@ is not archived. Ghostty is not embedded in this client.
 On Hosts advertising `remote-scroll`, **Scroll Up** and **Scroll Down** move the
 Host pane by its current height minus three rows (at least one row). Native
 scrollback moves exactly that far; application-managed scrolling uses an equivalent
-precision wheel distance and may vary with Host settings and the application. The two buttons sit above the live
+precision wheel distance adjusted by Host internal Agent profiles (Codex: three
+rows per event with eight rows reserved for composer/status). Host settings and
+the application can still change the distance. The two buttons sit above the live
 screen. Swipes only move the local reader, including at either edge, and long
 presses keep native text selection. The bottom Follow latest controls remain
 local reading controls. The remote scroll buttons operate the Host's current
@@ -64,9 +66,9 @@ One scroll waits for a fresh screen and matching Host acknowledgement; a spinner
 ends after five seconds if no confirmation arrives. Timed-out or disconnected
 scrolls are never replayed automatically. A fresh capture does not prove that the
 application moved, including when it is already at the beginning or end. Following
-latest text pauses during remote scrolling. After scrolling up, the local reader
-starts at the top of the returned screen; after scrolling down, it starts at the
-bottom. Hosts without `remote-scroll` keep those two controls disabled.
+latest text pauses during remote scrolling. After either scrolling up or down,
+the local reader starts at the top of the returned screen. Hosts without
+`remote-scroll` keep those two controls disabled.
 
 Hosts advertising `scroll-state-v1` send explicit scroll boundaries with each
 screen after the client opts in. The matching screen commits those boundaries:
