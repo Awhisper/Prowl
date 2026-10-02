@@ -159,8 +159,8 @@ struct MirrorTerminalIntegrationTests {
       terminal, columns: UInt32(size.columns), rows: UInt32(size.rows), preserveRows: true)
     #expect(actual == expected)
     let archive = try #require(try GhosttyMirrorPaneSource.exportScrollback(replica))
-    let vt = try #require(String(data: archive, encoding: .utf8))
-    #expect(vt.contains("38;2;80;190;240"))
+    let styledText = try #require(String(data: archive, encoding: .utf8))
+    #expect(styledText.contains("38;2;80;190;240"))
   }
 
   private func firstHistoryRow(_ text: String) throws -> Int {
