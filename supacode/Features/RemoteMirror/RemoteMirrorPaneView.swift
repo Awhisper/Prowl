@@ -162,20 +162,28 @@ struct RemoteMirrorPaneView: View {
 
   private var scrollControls: some View {
     HStack(spacing: 12) {
-      if client.scrollState.isLoading {
-        ProgressView("Scrolling…").controlSize(.small)
-      } else if let error = client.scrollState.error {
-        Text(error).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-      } else if client.viewportState.text != nil {
-        Text("Host scrollback · Plain text").font(.caption).foregroundStyle(.secondary)
-      }
-      Spacer(minLength: 0)
       Button("Scroll Up", systemImage: "chevron.up") { client.scroll(.upward) }
-        .help("Scroll the Host terminal up; distance depends on the running program")
+        .help("Scroll the Host terminal up by about a page, keeping three rows of overlap")
         .accessibilityIdentifier("remote-mirror-scroll-up")
         .disabled(!client.canScroll(.upward))
+      ZStack {
+        if client.scrollState.isLoading {
+          HStack(spacing: 6) {
+            ProgressView().controlSize(.small)
+            Text("Scrolling…").font(.caption)
+          }
+        } else if let error = client.scrollState.error {
+          Text(error).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+            .help(error)
+        } else if client.viewportState.text != nil {
+          Text("Host scrollback · Plain text").font(.caption).foregroundStyle(.secondary)
+        }
+      }
+      .lineLimit(1)
+      .frame(maxWidth: .infinity)
+      .frame(height: 20)
       Button("Scroll Down", systemImage: "chevron.down") { client.scroll(.downward) }
-        .help("Scroll the Host terminal down; distance depends on the running program")
+        .help("Scroll the Host terminal down by about a page, keeping three rows of overlap")
         .accessibilityIdentifier("remote-mirror-scroll-down")
         .disabled(!client.canScroll(.downward))
     }

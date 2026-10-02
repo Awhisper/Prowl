@@ -105,7 +105,10 @@ Fit to Window text small. iOS
 renders replacement text with local reflow. Cleared output is not an archive.
 
 On a Host advertising remote scrolling, **Scroll Up** and **Scroll Down** move
-the live Host terminal by a small wheel step. These buttons sit above the live
+the live Host terminal by its current pane height minus three rows (at least one
+row). Native scrollback moves by that exact number of rows. Application-owned
+scrolling receives the equivalent precision wheel distance; Host precision-scroll
+settings and the application can change the resulting distance. These buttons sit above the live
 view on all clients. Wheel and touch gestures only move the local readable view;
 they never request remote scrolling. Follow latest remains below the mobile reader.
 

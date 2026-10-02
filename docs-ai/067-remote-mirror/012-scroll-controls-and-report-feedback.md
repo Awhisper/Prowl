@@ -53,3 +53,25 @@ remote restarts, physical installs or PR publication are part of this revision.
   `run` method also retains its baseline complexity warning under explicit lint.
 - Ghostty framework SHA-256 and submodule state remain unchanged. Physical-device
   and remote real-Agent acceptance of this revision remain pending.
+
+## Page-sized scroll follow-up (2026-10-02)
+
+Device acceptance requested a useful page step and stable Mac viewport sizing.
+Host now computes `max(1, paneRows - 3)` for each request, so resizing the Host
+pane changes the next step and three rows provide context. Proven native
+scrollback uses Ghostty's existing `scroll_page_lines` binding. Otherwise Host
+sends the equivalent precision wheel pixel distance, retaining application-owned
+scroll handling without Agent-specific keys or Ghostty changes. The Host's
+precision multiplier and the running application's wheel policy can change the
+actual TUI distance.
+
+Mac places the two buttons at opposite ends of the same row. Its center reserves
+a constant height for a horizontal spinner and label, error text, or scrollback
+status, so loading does not change the terminal's fit-to-window height.
+
+Verification: all 16 real Ghostty integration tests pass, including exact native
+page distance, stable viewport height throughout loading, alternate-screen wheel
+input, text clients, and retained-history preservation. Debug build succeeds
+with no warnings; changed-file SwiftLint and formatting pass. Full `make check`
+still stops on the five pre-existing RepositoryIconImage aspect-ratio violations.
+The current iOS Debug was installed successfully on the connected iPhone 16.

@@ -49,7 +49,9 @@ Each pane keeps separate live/history reading positions. Erased transient output
 is not archived. Ghostty is not embedded in this client.
 
 On Hosts advertising `remote-scroll`, **Scroll Up** and **Scroll Down** move the
-Host pane by a small, bounded scroll amount. The two buttons sit above the live
+Host pane by its current height minus three rows (at least one row). Native
+scrollback moves exactly that far; application-managed scrolling uses an equivalent
+precision wheel distance and may vary with Host settings and the application. The two buttons sit above the live
 screen. Swipes only move the local reader, including at either edge, and long
 presses keep native text selection. The bottom Follow latest controls remain
 local reading controls. The remote scroll buttons operate the Host's current

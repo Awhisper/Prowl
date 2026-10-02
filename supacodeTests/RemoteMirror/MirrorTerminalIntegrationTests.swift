@@ -48,13 +48,24 @@ struct MirrorTerminalIntegrationTests {
     try await fixture.wait("Mounted viewport overlay") { textView(hosting) != nil }
     let overlay = try #require(textView(hosting))
     #expect(overlay.isHidden)
+    hosting.layoutSubtreeIfNeeded()
+    let viewportHeight = try #require(overlay.enclosingScrollView).frame.height
+    let initialText = try fixture.source.textSnapshot(fixture.hostView.id).text
+    let pageRows = max(1, Int(ghostty_surface_size(try #require(fixture.hostView.surface)).rows) - 3)
+    func firstHistoryRow(_ text: String) throws -> Int {
+      let row = try #require(text.split(separator: "\n").first { $0.hasPrefix("HISTORY:") })
+      return try #require(Int(row.dropFirst("HISTORY:".count)))
+    }
     client.scroll(.upward)
     #expect(client.scrollState.isLoading)
     try await fixture.wait("Earlier remote viewport") {
-      !client.scrollState.isLoading && client.viewportState.text != nil
+      hosting.layoutSubtreeIfNeeded()
+      #expect(overlay.enclosingScrollView?.frame.height == viewportHeight)
+      return !client.scrollState.isLoading && client.viewportState.text != nil
     }
     #expect(client.scrollState.error == nil)
     let earlier = try #require(client.viewportState.text)
+    #expect(try firstHistoryRow(initialText) - firstHistoryRow(earlier) == pageRows)
     #expect(earlier.contains("HISTORY:"))
     #expect(!earlier.contains("HISTORY:450"))
     // Original Ghostty snapshots remain the styled active screen. The paired

@@ -92,7 +92,18 @@ final class GhosttyMirrorPaneSource: MirrorPaneSource {
   func scroll(_ direction: MirrorMessage.ScrollDirection, to id: UUID) throws {
     guard let view = view(id), let terminal = view.surface else { throw MirrorProtocolError.invalidMessage }
     let size = ghostty_surface_size(terminal)
-    guard size.columns > 0, size.rows > 0 else { throw MirrorProtocolError.invalidMessage }
+    guard size.columns > 0, (1...1000).contains(size.rows), size.cell_height_px > 0 else {
+      throw MirrorProtocolError.invalidMessage
+    }
+    let rows = max(1, Int(size.rows) - 3)
+    if try captureGeometry(terminal).scrollBounds != nil {
+      let lines = direction == .upward ? -rows : rows
+      let action = "scroll_page_lines:\(lines)"
+      guard ghostty_surface_binding_action(terminal, action, UInt(action.utf8.count)) else {
+        throw MirrorProtocolError.invalidMessage
+      }
+      return
+    }
     let localPoint = view.window.map { view.convert($0.mouseLocationOutsideOfEventStream, from: nil) }
     let localMods = view.ghosttyMods(NSEvent.modifierFlags)
     defer {
@@ -103,10 +114,12 @@ final class GhosttyMirrorPaneSource: MirrorPaneSource {
       }
     }
     // Move through the outside position so an unchanged center cannot retain
-    // local modifier keys. One notch honors Host's configured wheel multiplier.
+    // local modifier keys. Precision pixels avoid the discrete wheel multiplier;
+    // applications still decide how many rows each resulting mouse event moves.
     ghostty_surface_mouse_pos(terminal, -1, -1, GHOSTTY_MODS_NONE)
     ghostty_surface_mouse_pos(terminal, view.bounds.midX, view.bounds.midY, GHOSTTY_MODS_NONE)
-    ghostty_surface_mouse_scroll(terminal, 0, direction == .upward ? 1 : -1, 0)
+    let pixels = Double(rows) * Double(size.cell_height_px)
+    ghostty_surface_mouse_scroll(terminal, 0, direction == .upward ? pixels : -pixels, 1)
   }
 
   var supportsBoundedHistory: Bool { true }

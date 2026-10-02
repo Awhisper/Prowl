@@ -38,7 +38,9 @@ is no private AI console or dependency on personal shell wrappers.
   Only these buttons send remote scroll input; swipes, edge pulls, selection and
   History remain local. **Follow latest** stays below the text and follows new frames.
   These actions scroll the actual Host pane, including a terminal application's own
-  scroll handling, so the distance depends on that application. One request runs at
+  scroll handling. Host targets its pane height minus three rows (at least one row),
+  with exact native scrollback movement and equivalent precision wheel input for
+  applications; Host precision-scroll settings and the application can affect the distance. One request runs at
   a time with a loading indicator; an unchanged screen also completes normally.
   Requests time out after five seconds and are never replayed after reconnecting.
   Hosts with `scroll-state-v1` can confirm the top/bottom boundary: the matching
