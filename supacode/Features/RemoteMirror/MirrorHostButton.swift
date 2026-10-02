@@ -116,6 +116,7 @@ private struct MirrorSettingsView: View {
   let reconnect: (MirrorKnownHost) -> Void
   @State private var interfaces: [MirrorNetworkInterface] = []
   @State private var deviceToRevoke: MirrorPairedDevice?
+  @State private var revokeAllPresented = false
   @State private var mirrorToDisconnect: DisconnectTarget?
 
   private struct DisconnectTarget {
@@ -174,6 +175,19 @@ private struct MirrorSettingsView: View {
       Button("Revoke", role: .destructive) { host.revoke(device.id) }
     } message: { _ in
       Text("The device is disconnected and must pair again before it can mirror this Mac.")
+    }
+    .alert(
+      "Revoke All Devices?", isPresented: $revokeAllPresented
+    ) {
+      Button("Revoke All Devices", role: .destructive) { host.revokeAllDevices() }
+      Button("Cancel", role: .cancel) {}
+    } message: {
+      Text(
+        """
+        All devices will be disconnected and must pair again. \
+        Saved connections and the current pairing code will no longer work. Local terminals keep running.
+        """
+      )
     }
     .alert(
       "Disconnect Mirror?",
@@ -255,6 +269,16 @@ private struct MirrorSettingsView: View {
           .buttonStyle(.borderedProminent)
           .help("Allow paired Prowl devices to connect to this Mac")
         }
+      }
+      if !host.devices.isEmpty {
+        Button("Revoke All Devices…", role: .destructive) {
+          interact()
+          revokeAllPresented = true
+        }
+        .help(
+          "Disconnect all devices and require fresh pairing, including devices currently offline"
+        )
+        .accessibilityIdentifier("remote-mirror-revoke-all-devices")
       }
       ForEach(host.devices) { device in
         VStack(alignment: .leading, spacing: 4) {

@@ -148,6 +148,33 @@ final class MirrorHost {
     }
   }
 
+  func revokeAllDevices() {
+    guard var next = identity else { return }
+    next.devices.removeAll()
+    do {
+      // Persist first: a failed vault write must not pretend access was revoked.
+      try saveIdentity(next)
+      identity = next
+      devices = []
+      error = nil
+      pairingTask?.cancel()
+      pairingTask = nil
+      pairingKey = ""
+      pairingExpiresAt = nil
+      lastPairedDevice = nil
+      pendingPairings.removeAll()
+      for peerID in Array(commandPeers.keys) { cancelCommand(peerID, includingCreate: true) }
+      // Include unauthenticated peers so an in-flight pairing cannot survive the reset.
+      for peer in Array(peers.values) + Array(pendingPeers.values) {
+        peer.close("All device access was revoked. Pair again to connect.")
+      }
+      if isRunning || isStarting { try rebuildListener() }
+    } catch {
+      SupaLogger("RemoteMirror").warning("Host device reset failed: \(error)")
+      self.error = error.localizedDescription
+    }
+  }
+
   private struct Subscription {
     let paneID: UUID
     let id = UUID()

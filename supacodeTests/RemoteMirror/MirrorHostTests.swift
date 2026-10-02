@@ -281,7 +281,9 @@ struct MirrorHostTests {
 
   @Test(
     .timeLimit(.minutes(1)),
-    arguments: ["revoke", "stop", "disconnect-revoke", "disconnect-stop", "disconnect"])
+    arguments: [
+      "revoke", "revoke-all", "stop", "disconnect-revoke", "disconnect-revoke-all", "disconnect-stop", "disconnect",
+    ])
   func authorityRemovalCancelsPreparedProfile(mode: String) async throws {
     let suite = "MirrorCreateCancellation-\(UUID())"
     let defaults = try #require(UserDefaults(suiteName: suite))
@@ -348,6 +350,7 @@ struct MirrorHostTests {
       for await offline in Observations({ host.onlineDeviceIDs.isEmpty }) where offline { break }
     }
     if mode.hasSuffix("revoke") { host.revoke(Self.identity.devices[0].id) }
+    if mode.hasSuffix("revoke-all") { host.revokeAllDevices() }
     if mode.hasSuffix("stop") { host.stop() }
     try #require(preparation != nil)
     preparation?.resume()

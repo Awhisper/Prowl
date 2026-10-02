@@ -66,7 +66,11 @@ Device labels use the Mac local host name or the iOS system device name; pairing
 does not resolve a DNS name to obtain this label.
 
 Revocation removes the persisted secret and disconnects all connections for that device;
-other devices remain connected. Device records are limited to 64. If enrollment
+other devices remain connected. **Revoke All Devices…** asks for confirmation, then
+removes every device's saved authorization, including offline devices, disconnects
+all clients, and invalidates the current pairing code. Host keeps listening and
+local terminals keep running. Saved client connections cannot reconnect until each
+device pairs again with a fresh code. Device records are limited to 64. If enrollment
 succeeds on Host but its response or the client's save is lost, open a new window
 and remove the unused device record. Unreadable saved entries are omitted from the Host list without deleting them.
 Errors that prevent pairing or connection remain visible in plain language, naming
