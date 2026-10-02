@@ -244,12 +244,22 @@ and [MirrorClient/Android](../MirrorClient/Android/) (phones and tablets). Each
 project retains its own build and test entry points; neither is built by the Mac
 App target or release pipeline. See [client setup](../MirrorClient/README.md).
 
+### Copy connection details to Mac
+
+On Host, open **Add a Device**, choose the Wi-Fi or VPN address reachable from
+Mirror, and click **Copy Connection Details**. This single copy includes the
+address, port, pairing code and expiry. In Mac Mirror's connection form, paste
+into the address, port or pairing-code field; all three fields fill together,
+even when pasting into an existing value. Click **Connect** to pair. Fresh copied
+details bypass saved device access, including credentials revoked by Host.
+Expired or malformed details show an error without replacing existing fields.
+
 ### Scan to pair a phone
 
 Open **Add a Device** on Host, then **Scan QR Code** in the mobile app's Host
 connection form. The QR includes the numeric IP address, port and current pairing
 code. Scanning starts the normal authenticated pairing flow and then offers the
-Host panes. Choose the Wi-Fi or VPN address reachable from your phone in **QR
+Host panes. Choose the Wi-Fi or VPN address reachable from your phone in **Connection
 address** when Host has multiple interfaces. Both devices still need network access
 to that address; scanning does not create a tunnel.
 

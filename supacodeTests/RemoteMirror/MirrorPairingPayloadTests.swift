@@ -16,6 +16,28 @@ struct MirrorPairingPayloadTests {
     }
   }
 
+  @Test func pastedDetailsReplaceExistingConnectionFieldContents() throws {
+    let payload = try MirrorPairingPayload(
+      address: "30.172.64.62", port: 5988, code: "ABCD-EFGH", expires: now.addingTimeInterval(60))
+    let copied = try payload.encoded()
+    for previous in ["old-host.local", "7880", "ZZZZ-YYYY", ""] {
+      for input in [copied, previous + copied, copied + previous, " \n" + copied + "\n "] {
+        #expect(try MirrorEndpointInput.pastedPairingPayload(input, now: now) == payload)
+      }
+    }
+    #expect(try MirrorEndpointInput.pastedPairingPayload("192.168.0.1", now: now) == nil)
+    #expect(try MirrorEndpointInput.pastedPairingPayload("ABCD-EFGH", now: now) == nil)
+    #expect(throws: MirrorEndpointInput.Problem.expiredPairingDetails) {
+      try MirrorEndpointInput.pastedPairingPayload(copied, now: now.addingTimeInterval(61))
+    }
+    #expect(throws: MirrorEndpointInput.Problem.invalidPairingDetails) {
+      try MirrorEndpointInput.pastedPairingPayload(copied.replacing("5988", with: "0"), now: now)
+    }
+    #expect(throws: MirrorEndpointInput.Problem.invalidPairingDetails) {
+      try MirrorEndpointInput.pastedPairingPayload("{\"type\":\"prowl-mirror-pairing\"", now: now)
+    }
+  }
+
   @Test func rejectsExpiredAndMalformedCodes() throws {
     let valid =
       #"{"type":"prowl-mirror-pairing","version":1,"address":"192.168.1.20","port":7880,"#
