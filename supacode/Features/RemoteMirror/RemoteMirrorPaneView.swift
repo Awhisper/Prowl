@@ -63,7 +63,8 @@ struct RemoteMirrorPaneView: View {
         if let view = client.replica.view {
           MirrorTerminalViewport(
             surface: view, displaySize: client.replica.displaySize, fitsWindow: fitsWindow,
-            viewportText: client.viewportState.text, scrollCompletion: client.scrollState.completedRequestID
+            viewportText: client.replica.usesStyledScrollback ? nil : client.viewportState.text,
+            scrollCompletion: client.scrollState.completedRequestID
           )
           .opacity(client.showsHistory ? 0 : 1)
           .allowsHitTesting(!client.showsHistory)
@@ -175,7 +176,7 @@ struct RemoteMirrorPaneView: View {
         } else if let error = client.scrollState.error {
           Text(error).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
             .help(error)
-        } else if client.viewportState.text != nil {
+        } else if client.viewportState.text != nil && !client.replica.usesStyledScrollback {
           Text("Host scrollback · Plain text").font(.caption).foregroundStyle(.secondary)
         }
       }

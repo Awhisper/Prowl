@@ -3,6 +3,8 @@ import Foundation
 @MainActor
 protocol MirrorPaneSource {
   func panes() -> [MirrorPaneDescriptor]
+  var supportsStyledScrollback: Bool { get }
+  func snapshot(_ id: UUID, styledScrollback: Bool) throws -> MirrorFrame
   func snapshot(_ id: UUID) throws -> MirrorFrame
   func write(_ bytes: Data, to id: UUID) throws
   func textSnapshot(_ id: UUID) throws -> MirrorTextSnapshot
@@ -24,6 +26,8 @@ struct MirrorTextSnapshot {
 }
 
 extension MirrorPaneSource {
+  var supportsStyledScrollback: Bool { false }
+  func snapshot(_ id: UUID, styledScrollback: Bool) throws -> MirrorFrame { try snapshot(id) }
   func textSnapshot(_ id: UUID) throws -> MirrorTextSnapshot { .init(text: try activeText(id)) }
   var supportsViewportText: Bool { false }
   var supportsScrollState: Bool { false }

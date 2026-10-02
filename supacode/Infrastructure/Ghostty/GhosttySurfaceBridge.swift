@@ -7,6 +7,15 @@ final class GhosttySurfaceBridge {
   let state = GhosttySurfaceState()
   var surface: ghostty_surface_t?
   weak var surfaceView: GhosttySurfaceView?
+  // Local replica markers acknowledge parsing, rather than merely a PTY write.
+  var consumeTitle: ((String) -> Bool)?
+  var captureClipboard: (([(mime: String, data: String)]) -> Void)?
+  struct MirrorScrollbar {
+    let total: UInt64
+    let offset: UInt64
+    let length: UInt64
+  }
+  private(set) var mirrorScrollbar: MirrorScrollbar?
   var onTitleChange: ((String) -> Void)?
   var onSplitAction: ((GhosttySplitAction) -> Bool)?
   var onCloseRequest: ((Bool) -> Void)?
@@ -237,6 +246,9 @@ final class GhosttySurfaceBridge {
     switch action.tag {
     case GHOSTTY_ACTION_SET_TITLE:
       // TUIs re-emit the same title constantly; skip the no-op write + a11y post.
+      if let title = string(from: action.action.set_title.title), consumeTitle?(title) == true {
+        return true
+      }
       if let title = string(from: action.action.set_title.title), title != state.title {
         state.title = title
         onTitleChange?(title)
@@ -444,6 +456,7 @@ final class GhosttySurfaceBridge {
     switch action.tag {
     case GHOSTTY_ACTION_SCROLLBAR:
       let scroll = action.action.scrollbar
+      mirrorScrollbar = .init(total: scroll.total, offset: scroll.offset, length: scroll.len)
       surfaceView?.updateScrollbar(
         total: scroll.total,
         offset: scroll.offset,

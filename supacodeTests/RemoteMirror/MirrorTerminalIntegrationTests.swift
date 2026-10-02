@@ -14,7 +14,46 @@ import Testing
 @Suite(.serialized)
 @MainActor
 struct MirrorTerminalIntegrationTests {
-  @Test(.timeLimit(.minutes(1))) func remoteScrollMovesRealViewportAndPreservesFrozenHistory() async throws {
+  @Test(.timeLimit(.minutes(1))) func styledNativeScrollbackSurvivesWideRowsAndReflow() async throws {
+    let fixture = try Fixture()
+    defer { fixture.close() }
+    try await fixture.wait("Host ready") { fixture.hostText.contains("READY") }
+    try await fixture.startHost()
+    let client = try await fixture.connect()
+    try fixture.send("wrapped")
+    try await fixture.wait("Wide output received") { fixture.replicaText(client).contains("W250") }
+    let replica = try #require(client.replica.view)
+    let originalFont = try #require(ghostty_surface_quicklook_font(try #require(replica.surface)))
+    let font = Unmanaged<CTFont>.fromOpaque(originalFont).takeRetainedValue()
+    let clipboard = NSPasteboard.general.changeCount
+    for _ in 0..<3 {
+      client.scroll(.upward)
+      try await fixture.wait("Styled wrapped page") { !client.scrollState.isLoading }
+      #expect(client.scrollState.error == nil)
+      #expect(client.replica.usesStyledScrollback)
+      #expect(client.replica.view === replica)
+      let currentFont = try #require(ghostty_surface_quicklook_font(try #require(replica.surface)))
+      let current = Unmanaged<CTFont>.fromOpaque(currentFont).takeRetainedValue()
+      #expect(CTFontCopyPostScriptName(font) == CTFontCopyPostScriptName(current))
+      #expect(CTFontGetSize(font) == CTFontGetSize(current))
+    }
+    #expect(NSPasteboard.general.changeCount == clipboard)
+    fixture.hostView.setFrameSize(NSSize(width: 480, height: 420))
+    fixture.hostView.updateSurfaceSize()
+    try await fixture.wait("Styled resized page") {
+      let terminal = try #require(fixture.hostView.surface)
+      return client.replica.usesStyledScrollback
+        && client.replica.view?.mirrorGrid?.columns
+          == UInt32(ghostty_surface_size(terminal).columns)
+    }
+    client.scroll(.downward)
+    try await fixture.wait("Styled downward page") { !client.scrollState.isLoading }
+    #expect(client.replica.usesStyledScrollback)
+  }
+
+  @Test(.timeLimit(.minutes(1))) func remoteScrollMovesRealViewportAndPreservesFrozenHistory()
+    async throws
+  {
     let fixture = try Fixture()
     defer { fixture.close() }
     try await fixture.wait("Host program ready") { fixture.hostText.contains("READY") }
@@ -53,11 +92,8 @@ struct MirrorTerminalIntegrationTests {
     fixture.manager.activeWorktreeStates.first { $0.surfaces[fixture.hostView.id] != nil }?
       .surfaceAgentStates[fixture.hostView.id] = PaneAgentState(detectedAgent: .codex)
     let initialText = try fixture.source.textSnapshot(fixture.hostView.id).text
-    let pageRows = max(1, Int(ghostty_surface_size(try #require(fixture.hostView.surface)).rows) - 3)
-    func firstHistoryRow(_ text: String) throws -> Int {
-      let row = try #require(text.split(separator: "\n").first { $0.hasPrefix("HISTORY:") })
-      return try #require(Int(row.dropFirst("HISTORY:".count)))
-    }
+    let pageRows = max(
+      1, Int(ghostty_surface_size(try #require(fixture.hostView.surface)).rows) - 3)
     client.scroll(.upward)
     #expect(client.scrollState.isLoading)
     try await fixture.wait("Earlier remote viewport") {
@@ -68,18 +104,17 @@ struct MirrorTerminalIntegrationTests {
     #expect(client.scrollState.error == nil)
     let earlier = try #require(client.viewportState.text)
     #expect(try firstHistoryRow(initialText) - firstHistoryRow(earlier) == pageRows)
-    #expect(earlier.contains("HISTORY:"))
     #expect(!earlier.contains("HISTORY:450"))
-    // Original Ghostty snapshots remain the styled active screen. The paired
-    // overlay is what presents native scrollback on Mac, without replaying it.
-    #expect(fixture.replicaText(client).contains("HISTORY:450"))
+    // The same Ghostty surface now displays native history, retaining its font and styles.
+    #expect(client.replica.usesStyledScrollback)
+    #expect(client.replica.view === replica)
+    try verifyStyledReplica(replica, expected: earlier)
     #expect(earlier == (try fixture.sourceFrame()).viewportText)
     #expect(
       earlier.trimmingCharacters(in: .newlines)
-        == (try fixture.source.textSnapshot(fixture.hostView.id)).text.trimmingCharacters(in: .newlines))
-    try await fixture.wait("Observable pane presents viewport overlay") {
-      !overlay.isHidden && overlay.string == earlier
-    }
+        == (try fixture.source.textSnapshot(fixture.hostView.id)).text.trimmingCharacters(
+          in: .newlines))
+    try await fixture.wait("Observable pane retains the terminal renderer") { overlay.isHidden }
     var jumpedBack = false
     let stableUntil = ContinuousClock.now.advanced(by: .seconds(2))
     try await fixture.wait("Viewport stays scrolled across later polls") {
@@ -87,13 +122,16 @@ struct MirrorTerminalIntegrationTests {
       return ContinuousClock.now >= stableUntil
     }
     #expect(!jumpedBack)
-    #expect(try fixture.source.snapshot(fixture.hostView.id).scrollBounds == .init(atTop: false, atBottom: false))
-    try verifyOverlayPreservesOtherInputFocus(overlay, container: container, window: window)
+    #expect(
+      try fixture.source.snapshot(fixture.hostView.id).scrollBounds
+        == .init(atTop: false, atBottom: false))
+    do {
+      let viewport = try #require(overlay.enclosingScrollView as? MirrorTerminalScrollView)
+      viewport.updateViewportText(earlier)
+      try verifyOverlayPreservesOtherInputFocus(overlay, container: container, window: window)
+      viewport.updateViewportText(nil)
+    }
     hosting.layoutSubtreeIfNeeded()
-    let bitmap = try #require(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
-    hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
-    let image = try #require(bitmap.representation(using: .png, properties: [:]))
-    try image.write(to: URL(filePath: "/tmp/prowl-scroll-mac-native.png"))
     #expect(client.historyLines == history)
     #expect(client.historyOffset == offset)
     client.scroll(.downward)
@@ -114,7 +152,25 @@ struct MirrorTerminalIntegrationTests {
     #expect(client.historyLines == history)
   }
 
-  private func verifyOverlayPreservesOtherInputFocus(_ overlay: NSTextView, container: NSView, window: NSWindow)
+  private func verifyStyledReplica(_ replica: GhosttySurfaceView, expected: String) throws {
+    let terminal = try #require(replica.surface)
+    let size = ghostty_surface_size(terminal)
+    let actual = try GhosttyMirrorPaneSource.viewportText(
+      terminal, columns: UInt32(size.columns), rows: UInt32(size.rows), preserveRows: true)
+    #expect(actual == expected)
+    let archive = try #require(try GhosttyMirrorPaneSource.exportScrollback(replica))
+    let vt = try #require(String(data: archive, encoding: .utf8))
+    #expect(vt.contains("38;2;80;190;240"))
+  }
+
+  private func firstHistoryRow(_ text: String) throws -> Int {
+    let row = try #require(text.split(separator: "\n").first { $0.hasPrefix("HISTORY:") })
+    return try #require(Int(row.dropFirst("HISTORY:".count)))
+  }
+
+  private func verifyOverlayPreservesOtherInputFocus(
+    _ overlay: NSTextView, container: NSView, window: NSWindow
+  )
     throws
   {
     let input = NSTextField(frame: NSRect(x: 0, y: 0, width: 180, height: 24))
@@ -982,7 +1038,7 @@ struct MirrorTerminalIntegrationTests {
           finish) printf '\033[2J\033[H\033[32mFINAL:结论\033[0m\033[2;3H';;
           history|focus-history)
             if [ "$action" = focus-history ]; then printf '\033[?1004h'; fi
-            for ((n=1; n<=450; n++)); do printf 'HISTORY:%03d\n' "$n"; done;;
+            for ((n=1; n<=450; n++)); do printf '\033[38;2;80;190;240mHISTORY:%03d\033[0m\n' "$n"; done;;
           mouse-mode) printf '\033[?1000h\033[?1006hMOUSE-READY';;
           wrapped)
             columns=$(stty size); columns=${columns##* }

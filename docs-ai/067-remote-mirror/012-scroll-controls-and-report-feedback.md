@@ -103,3 +103,34 @@ run directly after an initial emulator instrumentation startup crash (zero tests
 executed in the failed launch). Mac Debug and signed iPhoneOS builds succeed.
 Full repository checks still stop at the five existing RepositoryIconImage lint
 violations; changed Mac files pass SwiftLint and formatting.
+
+## Mac styled native scrollback (2026-10-02)
+
+The plain NSTextView fallback uses different text shaping from the live Ghostty
+surface, so matching its nominal font is insufficient. A negotiated Mac-only
+`styled-scrollback-v1` extension carries a VT archive and native viewport offset
+alongside the existing viewport metadata. The replica reuses its live Ghostty
+surface and font settings. Mobile text-v1, retained History, and Ghostty source
+and binaries remain unchanged.
+
+The existing `write_screen_file:copy,vt` binding exports retained rows with styles.
+A synchronous surface-scoped callback intercepts only that binding's temporary
+file path, leaving the system clipboard untouched. Bounded archives are cached
+briefly; unbounded/oversized histories keep the established text fallback. The
+replica restores live input modes, replays history with trailing blank padding, waits for a
+private end-of-stream title marker, scrolls locally, and verifies the visible
+text against Host before revealing styled history. PTY write acknowledgement
+alone is insufficient because parsing may still be in flight.
+
+The archive omits trailing empty rows. Locating from the retained buffer start
+rather than its bottom avoids dropped rows at the active/history boundary.
+Bindings enqueue scroll work asynchronously too: verify the viewport for up to
+500 ms before acknowledging and revealing it. A mismatch keeps the text fallback.
+Exports are limited to 5,000 retained rows, 250,000 grid cells and 2 MiB; a large
+Host buffer or a smaller client retention setting can therefore use plain text.
+
+Verification: 70 selected Mac tests passed, including real native/TUI scrolling,
+wide-character reflow, unchanged font name and size, clipboard preservation,
+mobile text-v1, wire vectors, Host leases and input report suppression.
+Ghostty source and framework checksum remain unchanged. Physical remote cfuse
+acceptance is still required; no mobile rebuild is needed.

@@ -250,3 +250,12 @@ to that address; scanning does not create a tunnel.
 The QR expires with the existing 60-second, single-use code. Refresh Code on Host
 and scan again if it expires. Camera permission is requested only when scanning;
 manual entry remains available if permission is denied or scanning is unsupported.
+
+### Native history appearance on Mac
+
+When both Macs support styled scrollback, **Scroll Up/Down** keeps the same
+terminal renderer, font, font size and colors used by the live Mirror display.
+This is separate from **History**, which remains a retained-text snapshot.
+Older Hosts, histories exceeding the replay limit, or a viewport that cannot be
+reconstructed safely use the existing **Host scrollback · Plain text** fallback.
+Mobile clients continue using text-v1 and require no update for this feature.

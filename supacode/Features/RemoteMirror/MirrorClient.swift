@@ -25,6 +25,7 @@ final class MirrorClient: Identifiable {
   private(set) var supportsRemoteScroll = false
   private(set) var supportsScrollState = false
   private(set) var scrollBoundsState = MirrorScrollBoundsState()
+  private(set) var supportsStyledScrollback = false
   private(set) var supportsViewportText = false
   private(set) var viewportState = MirrorViewportState()
   let scrollState = MirrorScrollState()
@@ -174,7 +175,8 @@ final class MirrorClient: Identifiable {
           .init(
             paneID: pane.id, representation: .terminal, intent: resumeIntent,
             includeViewportText: supportsViewportText ? true : nil,
-            includeScrollState: supportsScrollState ? true : nil))
+            includeScrollState: supportsScrollState ? true : nil,
+            includeStyledScrollback: supportsStyledScrollback ? true : nil))
       )
     } catch { peer?.close(error.localizedDescription) }
   }
@@ -305,7 +307,9 @@ final class MirrorClient: Identifiable {
       }
     }
     isSubscribed = true
-    replica.display(message)
+    replica.display(
+      message, styledScrollback: viewportState.pendingStyledScrollback,
+      viewportText: viewportState.pendingText)
   }
 
   private func receiveViewport(_ message: MirrorMessage) {
@@ -385,6 +389,7 @@ final class MirrorClient: Identifiable {
     supportsRemoteScroll = message.capabilities?.contains("remote-scroll") == true
     supportsScrollState = message.capabilities?.contains("scroll-state-v1") == true
     supportsViewportText = message.capabilities?.contains("viewport-text-v1") == true
+    supportsStyledScrollback = message.capabilities?.contains("styled-scrollback-v1") == true
     supportsTakeover = message.capabilities?.contains("takeover") == true
     isConnecting = false
     onVerifiedConnection?()

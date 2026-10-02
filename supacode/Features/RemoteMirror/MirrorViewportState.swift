@@ -4,12 +4,15 @@ import Foundation
 struct MirrorViewportState {
   private(set) var text: String?
   private var pending: MirrorMessage.ViewportPayload?
+  var pendingText: String? { pending?.text }
+  var pendingStyledScrollback: MirrorStyledScrollback? { pending?.styledScrollback }
   private var receivedSequence: UInt64?
   private var presentedSequence: UInt64 = 0
 
   mutating func stage(_ payload: MirrorMessage.ViewportPayload) throws {
     guard pending == nil, payload.sequence > presentedSequence,
-      (payload.text?.utf8.count ?? 0) <= MirrorWire.maximumPayload / 8
+      (payload.text?.utf8.count ?? 0) <= MirrorWire.maximumPayload / 8,
+      payload.styledScrollback?.isValid != false
     else { throw MirrorProtocolError.invalidMessage }
     pending = payload
   }

@@ -15,6 +15,82 @@ final class GhosttyMirrorPaneSource: MirrorPaneSource {
     return max(1, (max(1, paneRows) - profile.reservedRows - 3) / profile.rowsPerEvent)
   }
 
+  private struct ArchiveCache {
+    let id: UUID
+    let frame: MirrorFrame
+    let offset: Int
+    let bytes: Data?
+    let expires: ContinuousClock.Instant
+  }
+  private var cachedArchive: ArchiveCache?
+  var supportsStyledScrollback: Bool { true }
+
+  func snapshot(_ id: UUID, styledScrollback: Bool) throws -> MirrorFrame {
+    var frame = try snapshot(id)
+    guard styledScrollback, let text = frame.viewportText, let view = view(id),
+      let terminal = view.surface, let scroll = view.bridge.mirrorScrollbar,
+      scroll.total >= scroll.length, scroll.offset <= scroll.total - scroll.length
+    else { return frame }
+    let distance = scroll.total - scroll.length - scroll.offset
+    // The public exporter is unbounded. Keep both the IO lock time and replica
+    // retention bounded; larger buffers retain the established text fallback.
+    guard distance > 0, scroll.total <= 5000, scroll.total * UInt64(frame.columns) <= 250_000 else {
+      return frame
+    }
+    let offset = Int(scroll.offset)
+    let archive: Data?
+    if let cachedArchive, cachedArchive.id == id,
+      cachedArchive.frame.columns == frame.columns, cachedArchive.frame.rows == frame.rows,
+      cachedArchive.frame.viewportText == frame.viewportText,
+      cachedArchive.offset == offset, ContinuousClock.now < cachedArchive.expires
+    {
+      archive = cachedArchive.bytes
+    } else {
+      archive = try Self.exportScrollback(view)
+      let geometry = try captureGeometry(terminal)
+      guard
+        try Self.viewportText(
+          terminal, columns: frame.columns, rows: frame.rows, preserveRows: true) == text,
+        geometry.columns == frame.columns, geometry.rows == frame.rows
+      else { throw MirrorPaneSourceError.captureChanged }
+      cachedArchive = .init(
+        id: id, frame: frame, offset: offset, bytes: archive, expires: .now.advanced(by: .milliseconds(500)))
+    }
+    if let archive { frame.styledScrollback = .init(bytes: archive, rowOffset: offset) }
+    return frame
+  }
+
+  static func exportScrollback(_ view: GhosttySurfaceView) throws -> Data? {
+    guard let terminal = view.surface, view.bridge.captureClipboard == nil else {
+      throw MirrorProtocolError.invalidMessage
+    }
+    var exportedPath: String?
+    view.bridge.captureClipboard = { items in
+      if items.count == 1 { exportedPath = items[0].data }
+    }
+    defer { view.bridge.captureClipboard = nil }
+    let action = "write_screen_file:copy,vt"
+    guard ghostty_surface_binding_action(terminal, action, UInt(action.utf8.count)),
+      let exportedPath
+    else {
+      throw MirrorProtocolError.invalidMessage
+    }
+    let url = URL(filePath: exportedPath)
+    // Ghostty owns the temporary directory; only consume the file it just made.
+    let handle = try FileHandle(forReadingFrom: url)
+    let data: Data
+    do {
+      data = try handle.read(upToCount: MirrorStyledScrollback.maximumBytes + 1) ?? Data()
+      try handle.close()
+      try FileManager.default.removeItem(at: url)
+      try FileManager.default.removeItem(at: url.deletingLastPathComponent())
+    } catch {
+      try? handle.close()
+      throw error
+    }
+    return data.isEmpty || data.count > MirrorStyledScrollback.maximumBytes ? nil : data
+  }
+
   let manager: WorktreeTerminalManager
 
   init(manager: WorktreeTerminalManager) {
@@ -64,8 +140,11 @@ final class GhosttyMirrorPaneSource: MirrorPaneSource {
     }
     let viewportText =
       geometry.active.isScrolled
-      ? try viewportText(terminal, columns: geometry.columns, rows: geometry.rows, preserveRows: true) : nil
-    guard try captureGeometry(terminal) == geometry else { throw MirrorPaneSourceError.captureChanged }
+      ? try Self.viewportText(
+        terminal, columns: geometry.columns, rows: geometry.rows, preserveRows: true) : nil
+    guard try captureGeometry(terminal) == geometry else {
+      throw MirrorPaneSourceError.captureChanged
+    }
     return MirrorFrame(
       columns: geometry.columns, rows: geometry.rows,
       bytes: Data(bytes: bytes, count: Int(text.text_len)), viewportText: viewportText,
@@ -145,9 +224,14 @@ final class GhosttyMirrorPaneSource: MirrorPaneSource {
   func textSnapshot(_ id: UUID) throws -> MirrorTextSnapshot {
     guard let terminal = view(id)?.surface else { throw MirrorProtocolError.invalidMessage }
     let geometry = try captureGeometry(terminal)
-    let text = try viewportText(terminal, columns: geometry.columns, rows: geometry.rows, preserveRows: false)
-    guard try captureGeometry(terminal) == geometry else { throw MirrorPaneSourceError.captureChanged }
-    return .init(text: text, columns: geometry.columns, rows: geometry.rows, scrollBounds: geometry.scrollBounds)
+    let text = try Self.viewportText(
+      terminal, columns: geometry.columns, rows: geometry.rows, preserveRows: false)
+    guard try captureGeometry(terminal) == geometry else {
+      throw MirrorPaneSourceError.captureChanged
+    }
+    return .init(
+      text: text, columns: geometry.columns, rows: geometry.rows,
+      scrollBounds: geometry.scrollBounds)
   }
 
   private struct Probe: Equatable {
@@ -204,11 +288,11 @@ final class GhosttyMirrorPaneSource: MirrorPaneSource {
     return .init(pixelY: text.tl_px_y, offset: text.offset_start)
   }
 
-  private func viewportText(
+  static func viewportText(
     _ terminal: ghostty_surface_t, columns: UInt32, rows: UInt32, preserveRows: Bool
   ) throws -> String {
     if !preserveRows {
-      return try readText(
+      return try Self.readText(
         terminal,
         selection: .init(
           top_left: .init(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_TOP_LEFT, x: 0, y: 0),
@@ -220,7 +304,7 @@ final class GhosttyMirrorPaneSource: MirrorPaneSource {
     var lines: [String] = []
     var byteCount = 0
     for row in 0..<rows {
-      let line = try readText(
+      let line = try Self.readText(
         terminal,
         selection: .init(
           top_left: .init(tag: GHOSTTY_POINT_VIEWPORT, coord: GHOSTTY_POINT_COORD_EXACT, x: 0, y: row),
@@ -233,7 +317,9 @@ final class GhosttyMirrorPaneSource: MirrorPaneSource {
     return lines.joined(separator: "\n")
   }
 
-  private func readText(_ terminal: ghostty_surface_t, selection: ghostty_selection_s) throws -> String {
+  private static func readText(_ terminal: ghostty_surface_t, selection: ghostty_selection_s) throws
+    -> String
+  {
     var result = ghostty_text_s()
     guard ghostty_surface_read_text(terminal, selection, &result) else { throw MirrorProtocolError.invalidMessage }
     defer { ghostty_surface_free_text(terminal, &result) }

@@ -5,6 +5,29 @@ import Testing
 
 @MainActor
 struct MirrorViewportStateTests {
+  @Test func styledArchiveIsBoundedAndStagedWithItsFrame() throws {
+    var state = MirrorViewportState()
+    let lease = UUID()
+    let valid = MirrorStyledScrollback(bytes: Data("styled".utf8), rowOffset: 20)
+    try state.stage(
+      .init(styledScrollback: valid, text: "expected", sequence: 1, subscriptionID: lease))
+    #expect(state.pendingStyledScrollback == valid)
+    try state.receiveFrame(sequence: 1)
+    try state.didPresent(sequence: 1)
+    #expect(state.pendingStyledScrollback == nil)
+    for invalid in [
+      MirrorStyledScrollback(bytes: Data(), rowOffset: 1),
+      MirrorStyledScrollback(bytes: Data([1]), rowOffset: -1),
+      MirrorStyledScrollback(
+        bytes: Data(repeating: 1, count: MirrorStyledScrollback.maximumBytes + 1), rowOffset: 1),
+    ] {
+      #expect(throws: MirrorProtocolError.invalidMessage) {
+        try state.stage(
+          .init(styledScrollback: invalid, text: "fallback", sequence: 2, subscriptionID: lease))
+      }
+    }
+  }
+
   @Test func textChangesOnlyWhenTheMatchingTerminalFrameIsPresented() throws {
     var state = MirrorViewportState()
     let lease = UUID()

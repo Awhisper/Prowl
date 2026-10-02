@@ -16,6 +16,17 @@ nonisolated struct MirrorFrame: Codable, Equatable, Sendable {
   let bytes: Data
   var viewportText: String?
   var scrollBounds: MirrorScrollBounds?
+  var styledScrollback: MirrorStyledScrollback?
+}
+
+nonisolated struct MirrorStyledScrollback: Codable, Equatable, Sendable {
+  static let maximumBytes = 2 * 1024 * 1024
+  let bytes: Data
+  let rowOffset: Int
+
+  var isValid: Bool {
+    !bytes.isEmpty && bytes.count <= Self.maximumBytes && (0...5000).contains(rowOffset)
+  }
 }
 
 nonisolated struct MirrorScrollBounds: Codable, Equatable, Sendable {
@@ -74,6 +85,7 @@ nonisolated enum MirrorMessage: Codable, Sendable {
     var intent: Intent
     var includeViewportText: Bool?
     var includeScrollState: Bool?
+    var includeStyledScrollback: Bool?
   }
   case subscribed(SubscribedPayload)
   struct SubscribedPayload: Codable, Sendable {
@@ -99,6 +111,7 @@ nonisolated enum MirrorMessage: Codable, Sendable {
   }
   case viewport(ViewportPayload)
   struct ViewportPayload: Codable, Sendable {
+    var styledScrollback: MirrorStyledScrollback?
     var text: String?
     var sequence: UInt64
     var subscriptionID: UUID
@@ -295,6 +308,10 @@ nonisolated enum MirrorMessage: Codable, Sendable {
     case .viewport(let payload): payload.text
     default: nil
     }
+  }
+  var includeStyledScrollback: Bool? {
+    if case .subscribe(let payload) = self { return payload.includeStyledScrollback }
+    return nil
   }
   var includeViewportText: Bool? {
     switch self {

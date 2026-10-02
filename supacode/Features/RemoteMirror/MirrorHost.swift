@@ -153,6 +153,7 @@ final class MirrorHost {
     let id = UUID()
     var representation: MirrorMessage.Representation = .terminal
     var includeViewportText = false
+    var includeStyledScrollback = false
     var includeScrollState = false
     var unstableCaptures = 0
     var gate = MirrorFrameGate()
@@ -510,6 +511,7 @@ final class MirrorHost {
                 + (source.supportsBoundedHistory ? ["history"] : [])
                 + (source.supportsRemoteScroll ? ["remote-scroll"] : [])
                 + (source.supportsViewportText ? ["viewport-text-v1"] : [])
+                + (source.supportsStyledScrollback ? ["styled-scrollback-v1"] : [])
                 + (source.supportsScrollState ? ["scroll-state-v1"] : []), hostRunID: hostRunID)))
       case .command:
         try handleCommand(message, peer: peer)
@@ -703,6 +705,8 @@ final class MirrorHost {
       paneID: paneID, representation: representation,
       includeViewportText: representation == .terminal && message.includeViewportText == true
         && source.supportsViewportText,
+      includeStyledScrollback: representation == .terminal && message.includeViewportText == true
+        && message.includeStyledScrollback == true && source.supportsStyledScrollback,
       includeScrollState: message.includeScrollState == true && source.supportsScrollState)
     // Prepare and encode before revoking the old lease. Capture failure leaves it intact.
     let first = try capture(&next)
@@ -761,7 +765,8 @@ final class MirrorHost {
           sequence: sequence, text: text, subscriptionID: subscription.id, scrollBounds: bounds))
     }
     guard subscription.gate.outstanding == nil else { return nil }
-    var frame = try source.snapshot(subscription.paneID)
+    var frame = try source.snapshot(
+      subscription.paneID, styledScrollback: subscription.includeStyledScrollback)
     if !subscription.includeViewportText { frame.viewportText = nil }
     if !subscription.includeScrollState { frame.scrollBounds = nil }
     guard let sequence = subscription.gate.offer(frame) else { return nil }
@@ -771,7 +776,10 @@ final class MirrorHost {
   private func send(_ message: MirrorMessage, subscription: Subscription, to peer: MirrorConnection) {
     if subscription.includeViewportText, case .frame(let payload) = message {
       peer.send(
-        .viewport(.init(text: payload.frame.viewportText, sequence: payload.sequence, subscriptionID: subscription.id)))
+        .viewport(
+          .init(
+            styledScrollback: payload.frame.styledScrollback, text: payload.frame.viewportText,
+            sequence: payload.sequence, subscriptionID: subscription.id)))
     }
     if subscription.includeScrollState, let sequence = message.sequence {
       let bounds: MirrorScrollBounds?
